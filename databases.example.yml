@@ -1,0 +1,44 @@
+# apiBLAST Database Configuration
+#
+# List every BLAST database this server should expose to users.
+# Copy this file to databases.yml and edit it for your installation.
+#
+# path     - The -db argument passed directly to BLAST+ binaries.
+#            Omit file extensions; BLAST locates the index files automatically.
+#            May be absolute or relative to the working directory of the server.
+#
+# type     - "nucleotide" : database contains nucleotide sequences
+#                           (accepted by blastn, tblastn, tblastx)
+#            "protein"    : database contains protein sequences
+#                           (accepted by blastp, blastx)
+#
+# description - Free-text label shown in GET /api/v1/databases responses.
+#               Useful for documenting version, source, or memory requirements.
+#
+# BLAST_DB_CONFIG env var points to this file (default: databases.yml in CWD).
+
+databases:
+  - name: nt_small
+    path: /data/blast/db/nt_small
+    type: nucleotide
+    description: "Small nucleotide test database (for smoke testing)"
+
+  - name: 16S_ribosomal_RNA
+    path: /data/blast/db/16S_ribosomal_RNA
+    type: nucleotide
+    description: "NCBI 16S ribosomal RNA sequences (~150 MB RAM)"
+
+  - name: refseq_rna
+    path: /data/blast/db/refseq_rna
+    type: nucleotide
+    description: "NCBI RefSeq RNA sequences (~20 GB RAM when active)"
+
+  - name: nt
+    path: /data/blast/db/nt
+    type: nucleotide
+    description: "NCBI non-redundant nucleotide sequences (~150 GB RAM when active)"
+
+  - name: nr
+    path: /data/blast/db/nr
+    type: protein
+    description: "NCBI non-redundant protein sequences (~300 GB RAM when active)"

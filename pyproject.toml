@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "apiblast"
+version = "1.0.0"
+description = "On-premises BLAST API server with async job queuing"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.115.*",
+    "uvicorn[standard]==0.34.*",
+    "pydantic==2.11.*",
+    "pydantic-settings==2.8.*",
+    "sqlalchemy==2.0.*",
+    "alembic==1.15.*",
+    "celery[redis]==5.5.*",
+    "redis==5.3.*",
+    "slowapi==0.1.*",
+    "psutil==6.1.*",
+    "python-dotenv==1.1.*",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+prod = [
+    "psycopg2-binary==2.9.*",
+    "gunicorn==23.*",
+]
+dev = [
+    "pytest==8.*",
+    "pytest-asyncio==0.25.*",
+    "httpx==0.28.*",
+    "pytest-cov==6.*",
+    "ruff==0.11.*",
+    "flower==2.0.*",
+]
+cli = [
+    "typer[all]==0.15.*",
+    "rich==13.*",
+    "httpx==0.28.*",
+]
+
+[project.scripts]
+apiblast = "cli.main:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "cli*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]

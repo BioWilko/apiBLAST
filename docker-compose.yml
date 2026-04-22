@@ -1,0 +1,99 @@
+services:
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --save 60 1 --loglevel warning
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      retries: 5
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: apiblast
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_DB: apiblast
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apiblast"]
+      interval: 10s
+      retries: 5
+
+  api:
+    build: .
+    restart: unless-stopped
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - blast_dbs:/data/blast/db:ro
+      - blast_results:/data/blast/results
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
+      interval: 15s
+      retries: 3
+      start_period: 10s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: >
+      celery -A app.tasks.celery_app.celery_app worker
+        --loglevel=info
+        --queues=blast,celery
+        --concurrency=${CELERY_CONCURRENCY:-4}
+        --prefetch-multiplier=1
+        --hostname=worker@%h
+    env_file: .env
+    volumes:
+      - blast_dbs:/data/blast/db:ro
+      - blast_results:/data/blast/results
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    # Scale horizontally: docker compose up --scale worker=N
+
+  beat:
+    build: .
+    restart: unless-stopped
+    command: celery -A app.tasks.celery_app.celery_app beat --loglevel=info
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  flower:
+    build: .
+    restart: unless-stopped
+    command: >
+      celery -A app.tasks.celery_app.celery_app flower
+        --port=${FLOWER_PORT:-5555}
+        --basic_auth=${FLOWER_BASIC_AUTH:-admin:changeme}
+    ports:
+      - "${FLOWER_PORT:-5555}:${FLOWER_PORT:-5555}"
+    env_file: .env
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  redis_data:
+  pg_data:
+  blast_dbs:
+  blast_results:
