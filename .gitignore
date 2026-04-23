@@ -45,3 +45,6 @@ alembic/versions/__pycache__/
 # Celery
 celerybeat-schedule
 celerybeat.pid
+
+# Config
+databases.yml

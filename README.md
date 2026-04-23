@@ -1,263 +1,140 @@
 # apiBLAST
 
-On-premises BLAST API server for local network users. Submit nucleotide and protein sequence alignment jobs to a shared server with async queuing, rate limiting, and hardware-aware concurrency control.
+Submit BLAST sequence alignment jobs to an on-premises apiBLAST server from the command line.
 
-## Architecture
-
-```
-Client → FastAPI (REST) → Celery worker → BLAST+ binary → filesystem results
-                ↑                ↑
-            SlowAPI          Redis broker
-          (rate limits)    (job queue + TTL)
-              SQLite/PostgreSQL (job metadata)
-```
-
-**Stack:** FastAPI · Celery · Redis · SQLAlchemy · SlowAPI · BLAST+ 2.14+
+> **Server operators:** see [docs/server.md](docs/server.md) for installation, Docker deployment, API reference, and hardware tuning.
 
 ---
 
-## Quickstart (local dev)
-
-### Prerequisites
-
-- Python 3.11+
-- Redis (`brew install redis` or `docker run -p 6379:6379 redis:7`)
-- BLAST+ binaries on PATH (e.g. `brew install blast` on macOS)
+## Installation
 
 ```bash
-# 1. Install
-pip install -e ".[dev]"
-
-# 2. Configure environment
-cp .env.example .env
-# Edit .env — set BLAST_BIN_DIR, BLAST_RESULT_DIR
-
-# 3. Configure databases
-cp databases.example.yml databases.yml
-# Edit databases.yml — add the BLAST databases available on this server
-
-# 4. Create a test database (optional, for smoke testing)
-./scripts/seed_test_db.sh
-
-# 5. Initialise the metadata database
-alembic upgrade head
-
-# 6. Start Redis (if not already running)
-redis-server &
-
-# 7. Start the Celery worker
-celery -A app.tasks.celery_app.celery_app worker \
-  --queues=blast,celery --concurrency=4 --loglevel=info &
-
-# 8. Start the API
-uvicorn app.main:app --reload
+pip install "apiblast[cli]"
 ```
 
-API is at `http://localhost:8000` · Auto-generated docs at `http://localhost:8000/docs`
+Requires Python 3.11+. No BLAST+ installation needed on the client machine.
 
 ---
 
-## Docker (recommended for production)
+## Quick start
 
 ```bash
-cp .env.example .env
-# Set POSTGRES_PASSWORD and any BLAST paths
+# Point the client at your server (once)
+apiblast config set --server http://blast-server:8000
 
-cp databases.example.yml databases.yml
-# Edit databases.yml — list the BLAST databases mounted into the container
+# List available databases
+apiblast databases
 
-# Calculate the right worker concurrency for your server:
-./scripts/compute_concurrency.sh
-# → paste CELERY_CONCURRENCY=N into .env
+# Submit a job and get results when done
+apiblast submit query.fa --program blastn --db nt_small --wait
 
-docker compose up -d
-```
-
-| Service | Port | Purpose |
-|---|---|---|
-| API | 8000 | REST API |
-| Flower | 5555 | Celery monitoring dashboard |
-| PostgreSQL | 5432 | Job metadata |
-| Redis | 6379 | Task broker |
-
-Scale workers horizontally: `docker compose up --scale worker=N`
-
-Mount your BLAST databases into the `blast_dbs` volume (read-only):
-```bash
-# In docker-compose.yml, replace the named volume with a bind mount:
-blast_dbs:
-  driver: local
-  driver_opts:
-    type: none
-    o: bind
-    device: /path/to/your/blast/databases
+# Or submit and poll separately
+JOB=$(apiblast submit query.fa --program blastn --db nt_small)
+apiblast status $JOB
+apiblast results $JOB
 ```
 
 ---
 
-## API Reference
+## Commands
 
-### Submit a job
-
-```
-POST /api/v1/jobs
-```
-
-```json
-{
-  "program":    "blastn",
-  "database":   "nt_small",
-  "query":      ">seq1\nATGCATGCATGCATGC",
-  "evalue":     1e-5,
-  "max_hits":   50,
-  "outfmt":     6,
-  "extra_args": {"dust": "no"}
-}
-```
-
-Returns `201` with `job_id` and `poll_url`.
-
-### Poll status
+### `apiblast submit <fasta_file>`
 
 ```
-GET /api/v1/jobs/{job_id}
+--program, -p   BLAST program: blastn | blastp | blastx | tblastn | tblastx  [default: blastn]
+--db, -d        Database name (required — see `apiblast databases`)
+--evalue        E-value threshold  [default: 1e-5]
+--max-hits      Maximum hits to return  [default: 50]
+--word-size     Word size override
+--outfmt        Output format code (BLAST -outfmt)  [default: 6]
+--extra-arg     Extra BLAST flag as key=value, repeatable
+--wait          Block until complete and print results
+--format        Output format when using --wait: table | tsv | json  [default: table]
+--top N         Show only the top N hits
 ```
 
-`status` is one of: `PENDING | RUNNING | SUCCESS | FAILURE | TIMEOUT | REVOKED`
-
-### Retrieve results
-
-```
-GET /api/v1/jobs/{job_id}/results
-Accept: application/json          # parsed hits (default)
-Accept: text/tab-separated-values # raw BLAST tabular output
-```
-
-### Other endpoints
-
-| Method | Path | Description |
-|---|---|---|
-| `DELETE` | `/api/v1/jobs/{job_id}` | Cancel a pending/running job |
-| `GET` | `/api/v1/databases` | List available BLAST databases |
-| `GET` | `/health` | Liveness check |
-| `GET` | `/health/ready` | Readiness check (Redis + DB) |
-
----
-
-## Rate limiting
-
-Per-IP limits enforced via SlowAPI (Redis-backed):
-
-| Limit | Value |
-|---|---|
-| Submissions per minute | 10 |
-| Submissions per hour | 100 |
-| Global queue depth | `CELERY_CONCURRENCY × 4` |
-| Max query length (nt) | 500,000 bp |
-| Max query length (aa) | 100,000 residues |
-| Max sequences per job | 100 |
-
-`429` responses include a `Retry-After: 60` header.
-`503` is returned when the server queue is full.
-
----
-
-## Hardware tuning
-
-### Concurrency
-
-BLAST's `-num_threads` is hardcoded to `1`. Only the word-matching phase is multi-threaded; using multiple Celery workers is consistently more efficient. Worker concurrency is set via:
+Without `--wait`, prints the bare job ID to stdout — useful for scripting:
 
 ```bash
-./scripts/compute_concurrency.sh
-# Outputs: CELERY_CONCURRENCY=14  (for a 16-core server)
+JOB=$(apiblast submit query.fa --program blastp --db nr)
 ```
 
-Rule of thumb: `nproc - 2` (reserve 2 cores for OS + API process).
+With `--wait`, blocks with a live progress spinner then renders a hit table:
 
-### Memory
+```bash
+apiblast submit query.fa --program blastn --db 16S_ribosomal_RNA --wait --top 10
+```
 
-Large BLAST databases (nt, nr) are memory-mapped by the OS on first access. Ensure the server has enough RAM to hold the largest database you expect to use concurrently. A rough guide:
+### `apiblast results <job_id>`
 
-| Database | Approximate RAM needed |
-|---|---|
-| 16S rRNA | < 1 GB |
-| refseq_rna | ~20 GB |
-| nt | ~150 GB |
-| nr | ~300 GB |
+Fetch results for a job. If the job is still running, polls with a progress spinner until it completes.
 
-The server enforces a `MEMORY_FLOOR_MB` hard floor (default 512 MB) — jobs are rejected with `FAILURE` if available RAM drops below this.
+```
+--format    table | tsv | json  [default: table]
+--top N     Truncate to top N hits (table and json modes)
+```
 
-### DB cache thrashing
+```bash
+# Render a Rich table (e-values colour-coded green/yellow/red)
+apiblast results $JOB
 
-Set `MAX_CONCURRENT_DBS` (default 3) to limit how many distinct databases can be active simultaneously. Jobs requiring a 4th+ database are retried after 30 seconds rather than evicting cached databases from OS page cache.
+# Raw tabular output for downstream tools
+apiblast results $JOB --format tsv | blast2bed
+
+# JSON
+apiblast results $JOB --format json | jq '.hits[0]'
+```
+
+### `apiblast status <job_id>`
+
+Print the current status of a single job (ID, program, database, elapsed time, status).
+
+### `apiblast databases`
+
+List all databases available on the configured server (name, type, programs, size, description).
+
+### `apiblast jobs`
+
+Show recently submitted jobs from this machine, with status refreshed from the server.
+
+```
+--status    Filter by status: PENDING | RUNNING | SUCCESS | FAILURE
+--limit     Maximum rows to show  [default: 20]
+```
+
+### `apiblast cancel <job_id>`
+
+Cancel a pending or running job.
+
+### `apiblast config`
+
+```bash
+apiblast config set --server http://blast-server:8000   # save server URL
+apiblast config show                                     # print current config
+```
 
 ---
 
 ## Configuration
 
-All settings are environment variables (`.env` file or system env):
-
-| Variable | Default | Description |
+| Source | Precedence | Example |
 |---|---|---|
-| `DATABASE_URL` | `sqlite:///./apiblast.db` | Switch to PostgreSQL for production |
-| `REDIS_URL` | `redis://localhost:6379/0` | |
-| `BLAST_BIN_DIR` | `/opt/homebrew/bin` | Directory containing `blastn`, `blastp`, etc. |
-| `BLAST_DB_CONFIG` | `databases.yml` | Path to the database configuration file |
-| `BLAST_RESULT_DIR` | `/data/blast/results` | Writable directory for job results |
-| `CELERY_CONCURRENCY` | `4` | Number of parallel BLAST workers |
-| `BLAST_SOFT_TIMEOUT_S` | `3600` | SIGTERM after this many seconds |
-| `BLAST_HARD_TIMEOUT_S` | `3900` | SIGKILL (must be > soft) |
-| `MAX_QUEUE_DEPTH` | `16` | Max pending + running jobs before `503` |
-| `MAX_CONCURRENT_DBS` | `3` | Max distinct databases active at once |
-| `MEMORY_FLOOR_MB` | `512` | Minimum free RAM to accept a job |
-| `RESULT_TTL_S` | `86400` | Result file retention (default 24 h) |
-| `FLOWER_BASIC_AUTH` | `admin:changeme` | Flower dashboard credentials — **change this** |
+| `APIBLAST_SERVER` env var | Highest | `export APIBLAST_SERVER=http://blast-server:8000` |
+| `~/.config/apiblast/config.json` | — | written by `apiblast config set` |
+| Default | Lowest | `http://localhost:8000` |
+
+Local job history is stored in `~/.config/apiblast/history.json`.
 
 ---
 
-## Development
+## Output formats
 
-```bash
-# Run all tests (no Redis or BLAST+ required)
-pytest
+The `results` and `submit --wait` commands support three output formats:
 
-# Run only unit tests
-pytest tests/unit/
+| Format | Description | Use case |
+|---|---|---|
+| `table` (default) | Rich table with colour-coded e-values | Interactive review |
+| `tsv` | Raw BLAST tabular output (outfmt 6) | Piping to downstream tools |
+| `json` | Parsed JSON hits | Scripting with `jq` |
 
-# Run only integration tests
-pytest tests/integration/
-
-# End-to-end test (requires live BLAST+ and Redis)
-./scripts/seed_test_db.sh
-pytest tests/e2e/
-
-# Lint
-ruff check .
-```
-
-### Adding a new BLAST database
-
-Databases are defined explicitly in `databases.yml` (path set by `BLAST_DB_CONFIG`). Add an entry and restart the API — no code changes required:
-
-```yaml
-databases:
-  - name: refseq_rna
-    path: /data/blast/db/refseq_rna
-    type: nucleotide          # nucleotide | protein
-    description: "NCBI RefSeq RNA sequences (~20 GB RAM when active)"
-```
-
-The `path` is passed directly as the `-db` argument to BLAST+ binaries (omit file extensions). Verify the entry is visible:
-
-```bash
-curl http://localhost:8000/api/v1/databases
-```
-
-See `databases.example.yml` for a full annotated example with common NCBI databases.
-
----
-
-## CLI client (coming soon)
-
-A `apiblast` command-line client (`pip install "apiblast[cli]"`) is planned as a Phase 2 addition, providing `submit`, `status`, `results`, and `databases` subcommands with Rich-formatted output.
+E-value colour coding in table mode: green < 1e-10 · yellow < 1e-5 · red ≥ 1e-5
