@@ -1,7 +1,8 @@
-"""HTTP client wrapper for the apiBLAST server."""
+"""CLI-facing HTTP client — thin wrapper around BLASTClient."""
 from __future__ import annotations
 
-import httpx
+from apiblast.client import BLASTClient
+from apiblast.exceptions import ApiBlastError
 
 
 class CliError(Exception):
@@ -10,46 +11,34 @@ class CliError(Exception):
         self.exit_code = exit_code
 
 
-def _raise_for_status(resp: httpx.Response) -> None:
-    if resp.is_success:
-        return
-    try:
-        detail = resp.json().get("detail", resp.text)
-    except Exception:
-        detail = resp.text
-    raise CliError(f"Server returned {resp.status_code}: {detail}")
-
-
 class CliClient:
+    """Wraps BLASTClient and converts ApiBlastError → CliError."""
+
     def __init__(self, base_url: str, timeout: float = 30.0):
-        self._base = base_url.rstrip("/")
-        self._timeout = timeout
+        self._client = BLASTClient(server=base_url, timeout=timeout)
 
-    def _get(self, path: str, **kwargs) -> httpx.Response:
-        with httpx.Client(base_url=self._base, timeout=self._timeout) as c:
-            resp = c.get(path, **kwargs)
-        _raise_for_status(resp)
-        return resp
-
-    def _post(self, path: str, **kwargs) -> httpx.Response:
-        with httpx.Client(base_url=self._base, timeout=self._timeout) as c:
-            resp = c.post(path, **kwargs)
-        _raise_for_status(resp)
-        return resp
-
-    def _delete(self, path: str) -> httpx.Response:
-        with httpx.Client(base_url=self._base, timeout=self._timeout) as c:
-            resp = c.delete(path)
-        _raise_for_status(resp)
-        return resp
-
-    # ── API methods ───────────────────────────────────────────────────────────
+    def _call(self, fn, *args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except ApiBlastError as e:
+            raise CliError(str(e)) from e
 
     def health(self) -> dict:
-        return self._get("/health").json()
+        return self._call(self._client.health)
 
     def list_databases(self) -> list[dict]:
-        return self._get("/api/v1/databases").json()["databases"]
+        dbs = self._call(self._client.databases)
+        return [
+            {
+                "name": d.name,
+                "description": d.description,
+                "program_types": d.program_types,
+                "path": d.path,
+                "size_bytes": d.size_bytes,
+                "last_updated": d.last_updated,
+            }
+            for d in dbs
+        ]
 
     def submit(
         self,
@@ -62,35 +51,61 @@ class CliClient:
         outfmt: int = 6,
         extra_args: dict | None = None,
     ) -> dict:
-        payload: dict = {
-            "program": program,
-            "database": database,
-            "query": query,
-            "evalue": evalue,
-            "max_hits": max_hits,
-            "outfmt": outfmt,
-            "extra_args": extra_args or {},
-        }
-        if word_size is not None:
-            payload["word_size"] = word_size
-        return self._post("/api/v1/jobs", json=payload).json()
+        job = self._call(
+            self._client.submit,
+            program=program,
+            database=database,
+            query=query,
+            evalue=evalue,
+            max_hits=max_hits,
+            word_size=word_size,
+            outfmt=outfmt,
+            extra_args=extra_args,
+        )
+        return {"job_id": job.id, "status": job.status, "submitted_at": job.submitted_at}
 
     def get_status(self, job_id: str) -> dict:
-        return self._get(f"/api/v1/jobs/{job_id}").json()
+        job = self._call(self._client.status, job_id)
+        return {
+            "job_id": job.id,
+            "status": job.status,
+            "program": job.program,
+            "database": job.database,
+            "submitted_at": job.submitted_at,
+            "started_at": job.started_at,
+            "finished_at": job.finished_at,
+            "elapsed_s": job.elapsed_s,
+            "error": job.error,
+            "result_url": job.result_url,
+        }
 
     def get_results_json(self, job_id: str) -> dict:
-        resp = self._get(
-            f"/api/v1/jobs/{job_id}/results",
-            headers={"Accept": "application/json"},
-        )
-        return resp.json()
+        result = self._call(self._client.results, job_id)
+        return {
+            "job_id": result.job_id,
+            "num_hits": result.num_hits,
+            "hits": [
+                {
+                    "query_id": h.query_id,
+                    "subject_id": h.subject_id,
+                    "pct_identity": h.pct_identity,
+                    "alignment_length": h.alignment_length,
+                    "mismatches": h.mismatches,
+                    "gap_opens": h.gap_opens,
+                    "q_start": h.q_start,
+                    "q_end": h.q_end,
+                    "s_start": h.s_start,
+                    "s_end": h.s_end,
+                    "evalue": h.evalue,
+                    "bitscore": h.bitscore,
+                }
+                for h in result.hits
+            ],
+        }
 
     def get_results_tsv(self, job_id: str) -> str:
-        resp = self._get(
-            f"/api/v1/jobs/{job_id}/results",
-            headers={"Accept": "text/tab-separated-values"},
-        )
-        return resp.text
+        return self._call(self._client.results_tsv, job_id)
 
     def cancel(self, job_id: str) -> dict:
-        return self._delete(f"/api/v1/jobs/{job_id}").json()
+        cancelled = self._call(self._client.cancel, job_id)
+        return {"cancelled": cancelled}
