@@ -13,7 +13,6 @@ TEST_DB_URL = "sqlite://"
 os.environ.setdefault("DATABASE_URL", TEST_DB_URL)
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("BLAST_BIN_DIR", "/tmp/fake_blast_bin")
-os.environ.setdefault("BLAST_DB_DIR", "/tmp/fake_blast_db")
 os.environ.setdefault("BLAST_RESULT_DIR", "/tmp/fake_blast_results")
 
 
@@ -57,8 +56,6 @@ def client(db_session, tmp_path):
          patch("app.config.get_settings") as mock_settings_fn:
         settings = get_settings()
         settings.BLAST_RESULT_DIR = tmp_path
-        settings.BLAST_DB_DIR = tmp_path / "db"
-        settings.BLAST_DB_DIR.mkdir()
         mock_settings_fn.return_value = settings
 
         with TestClient(app, raise_server_exceptions=True) as c:

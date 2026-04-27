@@ -14,11 +14,11 @@ _AA_PROGRAMS = ["blastp", "blastx"]
 _SIZE_EXTS = {".nhr", ".nin", ".nsq", ".phr", ".pin", ".psq"}
 
 
-def _disk_stats(db_path: Path) -> tuple[int, datetime | None]:
-    """Return (total_size_bytes, newest_mtime) for the index files of db_path."""
+def _disk_stats(db_dir: Path, db_name: str) -> tuple[int, datetime | None]:
+    """Return (total_size_bytes, newest_mtime) for the index files of a database."""
     size = 0
     last_updated: datetime | None = None
-    for f in db_path.parent.glob(f"{db_path.name}.*"):
+    for f in db_dir.glob(f"{db_name}.*"):
         if f.suffix in _SIZE_EXTS:
             size += f.stat().st_size
         mtime = datetime.fromtimestamp(f.stat().st_mtime)
@@ -46,18 +46,19 @@ def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
         db_type = str(entry.get("type", "nucleotide")).lower()
         program_types = _NT_PROGRAMS if db_type == "nucleotide" else _AA_PROGRAMS
 
-        db_path = Path(entry["path"])
+        db_name = entry["name"]
+        db_dir = Path(entry["path"])
         try:
-            size_bytes, last_updated = _disk_stats(db_path)
+            size_bytes, last_updated = _disk_stats(db_dir, db_name)
         except OSError:
             size_bytes, last_updated = 0, None
 
         results.append(
             DatabaseInfo(
-                name=entry["name"],
+                name=db_name,
                 description=entry.get("description", ""),
                 program_types=program_types,
-                path=str(db_path),
+                path=str(db_dir),
                 size_bytes=size_bytes,
                 last_updated=last_updated,
             )
@@ -69,3 +70,15 @@ def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
 def database_exists(name: str, config_path: Path | None = None) -> bool:
     """Return True if a database with the given name is defined in the config."""
     return any(db.name == name for db in load_databases(config_path))
+
+
+def get_database_path(name: str, config_path: Path | None = None) -> Path:
+    """Return the BLAST -db path for a named database: <path>/<name>.
+
+    Raises KeyError if the database is not present — callers should validate
+    via database_exists() before submitting jobs.
+    """
+    for db in load_databases(config_path):
+        if db.name == name:
+            return Path(db.path) / name
+    raise KeyError(f"Database not found in config: {name!r}")

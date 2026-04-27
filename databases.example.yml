@@ -3,9 +3,10 @@
 # List every BLAST database this server should expose to users.
 # Copy this file to databases.yml and edit it for your installation.
 #
-# path     - The -db argument passed directly to BLAST+ binaries.
-#            Omit file extensions; BLAST locates the index files automatically.
-#            May be absolute or relative to the working directory of the server.
+# path     - Directory containing the BLAST index files.
+#            The -db argument passed to BLAST+ is constructed as <path>/<name>,
+#            so the index files inside this directory must share the same base
+#            name as the `name` field (e.g. name: nt → files nt.ndb, nt.nhr …).
 #
 # type     - "nucleotide" : database contains nucleotide sequences
 #                           (accepted by blastn, tblastn, tblastx)

@@ -61,10 +61,13 @@ API is at `http://localhost:8000` · Auto-generated docs at `http://localhost:80
 
 ```bash
 cp .env.example .env
-# Set POSTGRES_PASSWORD and any BLAST paths
+# Set POSTGRES_PASSWORD, BLAST_BIN_DIR, and BLAST_RESULT_DIR
 
 cp databases.example.yml databases.yml
 # Edit databases.yml — list the BLAST databases mounted into the container
+
+cp docker-compose.override.yml.example docker-compose.override.yml
+# Edit docker-compose.override.yml — set device: to your BLAST database directory
 
 # Calculate the right worker concurrency for your server:
 ./scripts/compute_concurrency.sh
@@ -82,15 +85,50 @@ docker compose up -d
 
 Scale workers horizontally: `docker compose up --scale worker=N`
 
-Mount your BLAST databases into the `blast_dbs` volume (read-only):
+### Mounting BLAST databases
+
+Both the `api` and `worker` services mount the `blast_dbs` volume at `/data/blast/db` (read-only). By default this is a Docker-managed named volume — useful for testing, but holds no data from the host.
+
+To serve real databases, bind-mount your host database directory into the container. Use the provided override example rather than editing `docker-compose.yml` directly:
+
 ```bash
-# In docker-compose.yml, replace the named volume with a bind mount:
-blast_dbs:
-  driver: local
-  driver_opts:
-    type: none
-    o: bind
-    device: /path/to/your/blast/databases
+cp docker-compose.override.yml.example docker-compose.override.yml
+# Edit docker-compose.override.yml — set device: to your database directory
+```
+
+```yaml
+volumes:
+  blast_dbs:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: /path/to/your/blast/databases
+```
+
+Docker Compose merges `docker-compose.override.yml` automatically. `docker-compose.override.yml` is gitignored so local paths stay out of version control.
+
+Next, declare each database you want to expose in `databases.yml`. The `path` field is the directory containing the index files; the `-db` argument passed to BLAST+ is constructed as `<path>/<name>`, so the index files inside that directory must share the same base name as the `name` field (e.g. `name: nt` → files `nt.ndb`, `nt.nhr` …):
+
+```yaml
+databases:
+  - name: nt
+    path: /data/blast/db/nt
+    type: nucleotide
+    description: "NCBI nucleotide collection (~150 GB RAM when active)"
+
+  - name: nr
+    path: /data/blast/db/nr
+    type: protein
+    description: "NCBI non-redundant protein sequences (~300 GB RAM when active)"
+```
+
+Only databases declared in this file are visible to users via `GET /api/v1/databases` or accepted in job submissions.
+
+Restart the stack after editing `databases.yml`:
+
+```bash
+docker compose restart api worker
 ```
 
 ---
@@ -228,7 +266,7 @@ databases:
     description: "NCBI RefSeq RNA sequences (~20 GB RAM when active)"
 ```
 
-The `path` is passed directly as the `-db` argument to BLAST+ binaries (omit file extensions). Verify the entry is visible:
+`path` is the directory; BLAST+ receives `<path>/<name>` as its `-db` argument, so the index files must be named `refseq_rna.*` inside that directory. Verify the entry is visible:
 
 ```bash
 curl http://localhost:8000/api/v1/databases

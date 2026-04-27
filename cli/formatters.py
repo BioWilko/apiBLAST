@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 from rich import box
 
@@ -99,7 +100,7 @@ def print_job_status(job: dict) -> None:
     t.add_row("Database", job.get("database", ""))
     t.add_row("Elapsed", _elapsed(job))
     if job.get("error"):
-        t.add_row("Error", f"[red]{job['error']}[/]")
+        t.add_row("Error", f"[red]{escape(job['error'])}[/]")
     console.print(t)
 
 
@@ -167,7 +168,7 @@ def print_jobs_history(entries: list[dict]) -> None:
         status = e.get("status", "UNKNOWN")
         style = status_style(status)
         t.add_row(
-            e.get("job_id", "")[:36],
+            e.get("job_id", ""),
             e.get("program", ""),
             e.get("database", ""),
             _relative_time(e.get("submitted_at", "")),

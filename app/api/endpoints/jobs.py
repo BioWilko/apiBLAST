@@ -27,11 +27,15 @@ def _job_or_404(job_id: str, db: Session) -> Job:
     return job
 
 
+def _as_utc(dt: datetime) -> datetime:
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
 def _elapsed(job: Job) -> float | None:
     if job.started_at is None:
         return None
-    end = job.finished_at or datetime.now(timezone.utc)
-    return (end - job.started_at).total_seconds()
+    end = _as_utc(job.finished_at) if job.finished_at else datetime.now(timezone.utc)
+    return (end - _as_utc(job.started_at)).total_seconds()
 
 
 @router.post("/jobs", response_model=JobSubmitted, status_code=status.HTTP_201_CREATED)

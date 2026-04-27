@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "apiblast"
 version = "1.0.0"
 description = "On-premises BLAST API server with async job queuing"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.14"
 dependencies = [
     "fastapi==0.115.*",
     "uvicorn[standard]==0.34.*",
@@ -27,13 +27,15 @@ prod = [
     "psycopg2-binary==2.9.*",
     "gunicorn==23.*",
 ]
+flower = [
+    "flower==2.0.*",
+]
 dev = [
     "pytest==8.*",
     "pytest-asyncio==0.25.*",
     "httpx==0.28.*",
     "pytest-cov==6.*",
     "ruff==0.11.*",
-    "flower==2.0.*",
 ]
 python = [
     "httpx==0.28.*",

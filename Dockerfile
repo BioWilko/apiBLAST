@@ -10,13 +10,15 @@ WORKDIR /app
 
 COPY pyproject.toml .
 # Install base + prod extras
-RUN pip install --no-cache-dir -e ".[prod]"
+RUN pip install --no-cache-dir -e ".[prod,flower]"
 
 COPY . .
 
 # Non-root user for defence in depth
 RUN useradd -m apiblast && \
-    chown -R apiblast:apiblast /app
+    chown -R apiblast:apiblast /app && \
+    mkdir -p /data/blast/results && \
+    chown -R apiblast:apiblast /data
 USER apiblast
 
 # Default assumes Debian package BLAST location.

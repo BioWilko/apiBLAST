@@ -27,6 +27,15 @@ services:
       interval: 10s
       retries: 5
 
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
   api:
     build: .
     restart: unless-stopped
@@ -37,9 +46,10 @@ services:
     volumes:
       - blast_dbs:/data/blast/db:ro
       - blast_results:/data/blast/results
+      - ./databases.yml:/app/databases.yml:ro
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     healthcheck:
@@ -62,10 +72,11 @@ services:
     volumes:
       - blast_dbs:/data/blast/db:ro
       - blast_results:/data/blast/results
+      - ./databases.yml:/app/databases.yml:ro
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       redis:
-        condition: service_healthy
-      db:
         condition: service_healthy
     # Scale horizontally: docker compose up --scale worker=N
 

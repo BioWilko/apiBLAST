@@ -9,6 +9,7 @@ from typing import Annotated, Optional
 
 import typer
 from rich.console import Console
+from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
 from cli import client as _client_mod
@@ -51,11 +52,11 @@ def _poll_until_done(client: CliClient, job_id: str) -> dict:
         console=err,
         transient=True,
     ) as progress:
-        task = progress.add_task(f"Waiting — {job_id[:8]}…", total=None)
+        task = progress.add_task(f"Waiting — {job_id}…", total=None)
         while True:
             job = client.get_status(job_id)
             status = job.get("status", "UNKNOWN")
-            progress.update(task, description=f"[cyan]{status}[/] — {job_id[:8]}…")
+            progress.update(task, description=f"[cyan]{status}[/] — {job_id}…")
             if status in _TERMINAL_STATES:
                 return job
             time.sleep(interval)
@@ -165,14 +166,16 @@ def _render_results(
 ) -> None:
     status = job.get("status", "")
     if status != "SUCCESS":
-        err.print(f"[red]Job {job_id[:8]} ended with status {status}.[/]")
+        err.print(f"[red]Job {job_id} ended with status {status}.[/]")
         if job.get("error"):
-            err.print(f"  {job['error']}")
+            err.print(f"  {job['error']}", markup=False)
         raise typer.Exit(1)
 
     try:
         if format == "tsv":
             raw = client.get_results_tsv(job_id)
+            header = "qseqid\tsseqid\tpident\tlength\tmismatch\tgapopen\tqstart\tqend\tsstart\tsend\tevalue\tbitscore\n"
+            sys.stdout.write(header)
             sys.stdout.write(raw)
             return
 
@@ -187,7 +190,7 @@ def _render_results(
 
     hits = data.get("hits", [])
     num_hits = data.get("num_hits", len(hits))
-    err.print(f"[dim]{num_hits} hit(s) for job {job_id[:8]}[/]")
+    err.print(f"[dim]{num_hits} hit(s) for job {job_id}[/]")
     if not hits:
         console.print("[dim]No hits.[/]")
         return
@@ -275,9 +278,9 @@ def cancel(
         _handle_cli_error(e)
         return
     if result.get("cancelled"):
-        console.print(f"[green]Cancelled[/] job {job_id[:8]}")
+        console.print(f"[green]Cancelled[/] job {job_id}")
     else:
-        console.print(f"[dim]Job {job_id[:8]} was already in a terminal state — nothing to cancel.[/]")
+        console.print(f"[dim]Job {job_id} was already in a terminal state — nothing to cancel.[/]")
 
 
 # ── config subcommands ────────────────────────────────────────────────────────
@@ -299,8 +302,8 @@ def config_show() -> None:
     """Print current configuration."""
     data = _config.show_config()
     console.print(f"[bold]Server URL:[/] {data.get('server')}")
-    console.print(f"[dim]Config file:[/] {_config._config_file()}")
-    console.print(f"[dim]History file:[/] {_config._history_file()}")
+    console.print(f"[dim]Config file:[/] {escape(str(_config._config_file()))}")
+    console.print(f"[dim]History file:[/] {escape(str(_config._history_file()))}")
     env = __import__("os").environ.get("APIBLAST_SERVER")
     if env:
         console.print(f"[yellow]APIBLAST_SERVER env override:[/] {env}")

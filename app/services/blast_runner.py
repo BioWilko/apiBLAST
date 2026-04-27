@@ -10,6 +10,7 @@ from pathlib import Path
 
 from app.config import get_settings
 from app.models.db import Job
+from app.services.db_scanner import get_database_path
 
 _BLAST_PROGRAMS = {"blastn", "blastp", "blastx", "tblastn", "tblastx"}
 
@@ -32,7 +33,7 @@ def build_blast_command(job: Job, query_file: Path, result_file: Path) -> list[s
 
     cmd: list[str] = [
         str(binary),
-        "-db",              str(settings.BLAST_DB_DIR / job.database),
+        "-db",              str(get_database_path(job.database)),
         "-query",           str(query_file),
         "-out",             str(result_file),
         "-evalue",          str(job.evalue),

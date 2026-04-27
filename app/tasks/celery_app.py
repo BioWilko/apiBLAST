@@ -43,6 +43,7 @@ def _make_celery() -> Celery:
             },
         }
     )
+    app.autodiscover_tasks(["app.tasks.blast", "app.tasks.cleanup"])
     return app
 
 

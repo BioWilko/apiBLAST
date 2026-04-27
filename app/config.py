@@ -21,7 +21,6 @@ class Settings(BaseSettings):
 
     # BLAST binary and data locations
     BLAST_BIN_DIR: Path = Path("/opt/homebrew/bin")
-    BLAST_DB_DIR: Path = Path("/data/blast/db")
     BLAST_RESULT_DIR: Path = Path("/data/blast/results")
     BLAST_DB_CONFIG: Path = Path("databases.yml")
 

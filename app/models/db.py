@@ -32,17 +32,17 @@ class Job(Base):
     # The query file lives at BLAST_RESULT_DIR/{id}/query.fasta
     submitter_ip: Mapped[str] = mapped_column(String(45), nullable=False)
 
-    # Timestamps
+    # Timestamps — stored as TIMESTAMPTZ (timezone=True) so Postgres preserves UTC offset
     submitted_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=datetime.utcnow, server_default=func.now()
+        DateTime(timezone=True), nullable=False, server_default=func.now()
     )
-    started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Outcome
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_path: Mapped[str | None] = mapped_column(Text, nullable=True)
-    result_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    result_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
         Index("ix_jobs_result_expires_at", "result_expires_at"),
