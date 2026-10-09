@@ -1,0 +1,101 @@
+{{- $sc := .Values.defaultSecurityContext }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apiblast-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apiblast-api
+spec:
+  # Must stay 1 (0 to drain): the migrate initContainer must not run
+  # concurrently. Scale with api.uvicornWorkers.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: apiblast-api
+  template:
+    metadata:
+      name: apiblast-api
+      annotations:
+        {{- include "apiblast.checksumAnnotations" . | nindent 8 }}
+      labels:
+        app: apiblast-api
+    spec:
+      {{- include "apiblast.securityContext" $sc | nindent 6 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      volumes:
+        {{- include "apiblast.appVolumes" . | nindent 8 }}
+      initContainers:
+        {{- if .Values.volumes.initDirs.enabled }}
+        {{- include "apiblast.initDirsContainer" (dict "root" $ "subPaths" (list .Values.volumes.sharedTeam.subPaths.results) "owner" (printf "%v:%v" $sc.runAsUser $sc.runAsGroup)) | nindent 8 }}
+        {{- end }}
+        # Migrate the schema before the API starts, once Postgres accepts connections.
+        - name: migrate
+          {{- include "apiblast.image" . | nindent 10 }}
+          {{- include "apiblast.resources" .Values.migrate.resources | nindent 10 }}
+          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until python -c "import socket; socket.create_connection(('apiblast-postgres', 5432), 2)"; do
+                echo "waiting for apiblast-postgres:5432..."
+                sleep 2
+              done
+              exec alembic upgrade head
+      containers:
+        - name: api
+          {{- include "apiblast.image" . | nindent 10 }}
+          {{- include "apiblast.resources" .Values.api.resources | nindent 10 }}
+          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          command:
+            - uvicorn
+            - app.main:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8000"
+            - --workers
+            - {{ .Values.api.uvicornWorkers | toString | quote }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          volumeMounts:
+            {{- include "apiblast.appVolumeMounts" . | nindent 12 }}
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apiblast-api
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apiblast-api
+spec:
+  type: ClusterIP
+  selector:
+    app: apiblast-api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

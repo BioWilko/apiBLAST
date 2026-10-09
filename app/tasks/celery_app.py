@@ -28,8 +28,8 @@ def _make_celery() -> Celery:
             "task_acks_late": True,
             "task_reject_on_worker_lost": True,
             "worker_concurrency": settings.CELERY_CONCURRENCY,
-            "task_soft_time_limit": settings.BLAST_SOFT_TIMEOUT_S,
-            "task_time_limit": settings.BLAST_HARD_TIMEOUT_S,
+            "task_soft_time_limit": settings.JOB_SOFT_TIMEOUT_S,
+            "task_time_limit": settings.JOB_HARD_TIMEOUT_S,
             "task_track_started": True,
             "task_routes": {
                 "app.tasks.blast.blast_run": {"queue": "blast"},

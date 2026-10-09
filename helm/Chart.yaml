@@ -1,0 +1,6 @@
+apiVersion: v2
+name: apiblast
+description: Helm chart for apiBLAST (MMseqs2-backed BLAST-compatible search API) in the climb-gre namespace
+type: application
+version: 0.1.0
+appVersion: "2.0.0"

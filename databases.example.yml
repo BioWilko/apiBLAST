@@ -1,45 +1,54 @@
 # apiBLAST Database Configuration
 #
-# List every BLAST database this server should expose to users.
+# List every MMseqs2 database this server should expose to users.
 # Copy this file to databases.yml and edit it for your installation.
 #
-# path     - Directory containing the BLAST index files.
-#            The -db argument passed to BLAST+ is constructed as <path>/<name>,
-#            so the index files inside this directory must share the same base
-#            name as the `name` field (e.g. name: nt → files nt.ndb, nt.nhr …).
+# Only MMseqs2 sequence databases are supported. BLAST databases (makeblastdb
+# output: .nsq/.psq/.nal/... files) and MMseqs2 profile databases cannot be
+# searched.
 #
-# type     - "nucleotide" : database contains nucleotide sequences
-#                           (accepted by blastn, tblastn, tblastx)
-#            "protein"    : database contains protein sequences
-#                           (accepted by blastp, blastx)
+# name     - Database identifier used in job submissions, and the base name of
+#            its MMseqs2 files.
+#
+# path     - Directory containing the MMseqs2 database files.
+#            The target passed to mmseqs is <path>/<name>, so the files inside
+#            this directory must share the base name of the `name` field
+#            (e.g. name: silva → files silva, silva.dbtype, silva.index,
+#            silva_h, silva.idx …).
+#
+# type     - "nucleotide" : nucleotide database, accepted by blastn.
+#                           Indexed with createindex --search-type 3.
+#            "protein"    : protein database, accepted by blastp and blastx.
+#                           Padded with makepaddedseqdb for GPU searches.
 #
 # description - Free-text label shown in GET /api/v1/databases responses.
-#               Useful for documenting version, source, or memory requirements.
 #
-# BLAST_DB_CONFIG env var points to this file (default: databases.yml in CWD).
+# DB_CONFIG env var points to this file (default: databases.yml in CWD).
+#
+# The entries below are MMseqs2's standard databases (`mmseqs databases`).
 
 databases:
-  - name: nt_small
-    path: /data/blast/db/nt_small
+  - name: silva
+    path: /data/db/silva
     type: nucleotide
-    description: "Small nucleotide test database (for smoke testing)"
+    description: "SILVA ribosomal RNA (mmseqs databases SILVA)"
 
-  - name: 16S_ribosomal_RNA
-    path: /data/blast/db/16S_ribosomal_RNA
+  - name: resfinder
+    path: /data/db/resfinder
     type: nucleotide
-    description: "NCBI 16S ribosomal RNA sequences (~150 MB RAM)"
-
-  - name: refseq_rna
-    path: /data/blast/db/refseq_rna
-    type: nucleotide
-    description: "NCBI RefSeq RNA sequences (~20 GB RAM when active)"
+    description: "ResFinder antimicrobial resistance genes (mmseqs databases Resfinder)"
 
   - name: nt
-    path: /data/blast/db/nt
+    path: /data/db/nt
     type: nucleotide
-    description: "NCBI non-redundant nucleotide sequences (~150 GB RAM when active)"
+    description: "NCBI nucleotide collection (mmseqs databases NT)"
 
-  - name: nr
-    path: /data/blast/db/nr
+  - name: swissprot
+    path: /data/db/swissprot
     type: protein
-    description: "NCBI non-redundant protein sequences (~300 GB RAM when active)"
+    description: "UniProtKB/Swiss-Prot (mmseqs databases UniProtKB/Swiss-Prot)"
+
+  - name: uniref90
+    path: /data/db/uniref90
+    type: protein
+    description: "UniRef90 (mmseqs databases UniRef90)"

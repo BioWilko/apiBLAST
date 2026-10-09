@@ -50,7 +50,7 @@ Without the context manager, each call opens and closes its own connection.
 
 ### `client.databases() → list[Database]`
 
-List BLAST databases available on the server.
+List databases available on the server.
 
 ```python
 for db in client.databases():
@@ -77,10 +77,8 @@ Optional arguments:
 | Argument | Type | Default | Description |
 |---|---|---|---|
 | `evalue` | `float` | `1e-5` | E-value threshold |
-| `max_hits` | `int` | `50` | Maximum hits to return |
-| `word_size` | `int \| None` | `None` | Word size override |
-| `outfmt` | `int` | `6` | BLAST output format code |
-| `extra_args` | `dict` | `{}` | Additional BLAST flags, e.g. `{"dust": "no"}` |
+| `max_hits` | `int` | `50` | Maximum subjects to return per query |
+| `extra_args` | `dict` | `{}` | Additional MMseqs2 options, e.g. `{"min-seq-id": 0.9}` or, for blastx, `{"translation-table": 11}`. Only server-allowed options are accepted (see [server docs](server.md#extra_args)) |
 | `poll_interval` | `float` | `2.0` | Initial polling interval (seconds) |
 | `timeout` | `float \| None` | `None` | Raise `WaitTimeoutError` after this many seconds |
 | `on_poll` | `Callable[[Job], None] \| None` | `None` | Callback invoked after each status poll |
@@ -140,7 +138,7 @@ df_data = [
 
 ### `client.results_tsv(job_id) → str`
 
-Fetch raw tabular output (outfmt 6) as a string.
+Fetch raw tabular output (BLAST outfmt 6 columns) as a string.
 
 ```python
 tsv = client.results_tsv(job_id)
@@ -236,7 +234,7 @@ import pandas as pd
 from apiblast import BLASTClient
 
 with BLASTClient("http://blast-server:8000") as client:
-    result = client.blast("blastn", "16S_ribosomal_RNA", query)
+    result = client.blast("blastn", "silva", query)
 
 df = pd.DataFrame([
     {

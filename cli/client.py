@@ -47,8 +47,6 @@ class CliClient:
         query: str,
         evalue: float = 1e-5,
         max_hits: int = 50,
-        word_size: int | None = None,
-        outfmt: int = 6,
         extra_args: dict | None = None,
     ) -> dict:
         job = self._call(
@@ -58,8 +56,6 @@ class CliClient:
             query=query,
             evalue=evalue,
             max_hits=max_hits,
-            word_size=word_size,
-            outfmt=outfmt,
             extra_args=extra_args,
         )
         return {"job_id": job.id, "status": job.status, "submitted_at": job.submitted_at}

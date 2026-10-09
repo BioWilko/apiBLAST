@@ -1,8 +1,8 @@
 # apiBLAST
 
-Submit BLAST sequence alignment jobs to an on-premises apiBLAST server from the command line.
+Submit sequence search jobs to an on-premises apiBLAST server from the command line. Searches run on MMseqs2 and use BLAST's program names and tabular output.
 
-> **Server operators:** see [docs/server.md](docs/server.md) for installation, Docker deployment, API reference, and hardware tuning.
+> **Server operators:** see [docs/server.md](docs/server.md) for installation, deployment, API reference, and hardware tuning.
 
 ---
 
@@ -12,7 +12,7 @@ Submit BLAST sequence alignment jobs to an on-premises apiBLAST server from the 
 pip install "apiblast[cli]"
 ```
 
-Requires Python 3.11+. No BLAST+ installation needed on the client machine.
+Requires Python 3.11+. No search software needed on the client machine.
 
 ---
 
@@ -41,17 +41,23 @@ apiblast results $JOB
 ### `apiblast submit <fasta_file>`
 
 ```
---program, -p   BLAST program: blastn | blastp | blastx | tblastn | tblastx  [default: blastn]
+--program, -p   blastn (nucleotide DB) | blastp | blastx (protein DB)  [default: blastn]
 --db, -d        Database name (required — see `apiblast databases`)
 --evalue        E-value threshold  [default: 1e-5]
---max-hits      Maximum hits to return  [default: 50]
---word-size     Word size override
---outfmt        Output format code (BLAST -outfmt)  [default: 6]
---extra-arg     Extra BLAST flag as key=value, repeatable
+--max-hits      Maximum subjects to return per query  [default: 50]
+--extra-arg     Extra MMseqs2 option as key=value, repeatable (see below)
 --wait          Block until complete and print results
 --format        Output format when using --wait: table | tsv | json  [default: table]
 --top N         Show only the top N hits
 ```
+
+`--extra-arg` accepts only these options: `min-seq-id`, `c`, `cov-mode`, `s` (sensitivity, CPU searches only), and for blastx `translation-mode` (`1` = six full frames, the default; `0` = ORFs) and `translation-table` (e.g. `11` for bacteria):
+
+```bash
+apiblast submit genes.fa --program blastx --db prot_db --extra-arg translation-table=11 --wait
+```
+
+`tblastn` and `tblastx` are not supported, and `--word-size`/`--outfmt` were removed in 2.0.
 
 Without `--wait`, prints the bare job ID to stdout — useful for scripting:
 
@@ -62,7 +68,7 @@ JOB=$(apiblast submit query.fa --program blastp --db nr)
 With `--wait`, blocks with a live progress spinner then renders a hit table:
 
 ```bash
-apiblast submit query.fa --program blastn --db 16S_ribosomal_RNA --wait --top 10
+apiblast submit query.fa --program blastn --db silva --wait --top 10
 ```
 
 ### `apiblast results <job_id>`
@@ -91,7 +97,7 @@ Print the current status of a single job (ID, program, database, elapsed time, s
 
 ### `apiblast databases`
 
-List all databases available on the configured server (name, type, programs, size, description).
+List all databases available on the configured server (name, type, programs, size, description). Servers host MMseqs2 databases; nucleotide databases accept `blastn`, protein databases `blastp` and `blastx`.
 
 ### `apiblast jobs`
 
@@ -134,7 +140,7 @@ The `results` and `submit --wait` commands support three output formats:
 | Format | Description | Use case |
 |---|---|---|
 | `table` (default) | Rich table with colour-coded e-values | Interactive review |
-| `tsv` | Raw BLAST tabular output (outfmt 6) | Piping to downstream tools |
+| `tsv` | Raw tabular output in BLAST outfmt 6 columns | Piping to downstream tools |
 | `json` | Parsed JSON hits | Scripting with `jq` |
 
 E-value colour coding in table mode: green < 1e-10 · yellow < 1e-5 · red ≥ 1e-5

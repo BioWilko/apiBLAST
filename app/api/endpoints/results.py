@@ -47,7 +47,7 @@ def get_results(job_id: str, request: Request, db: Session = Depends(get_db)):
     if "text/tab-separated-values" in accept or "text/plain" in accept:
         return PlainTextResponse(content=raw)
 
-    # Default: parse outfmt 6 and return JSON
+    # Default: parse the 12-column tabular output and return JSON
     hits = result_store.parse_outfmt6(raw)
     return BlastResultResponse(
         job_id=job_id,

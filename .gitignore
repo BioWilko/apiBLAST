@@ -30,7 +30,7 @@ coverage.xml
 *.db-shm
 *.db-wal
 
-# BLAST result files (large, transient)
+# Local job results
 /data/
 
 # Alembic – keep versions, ignore pycache inside
@@ -48,4 +48,6 @@ celerybeat.pid
 
 # Config
 databases.yml
-docker-compose.override.yml
+
+# Helm credentials - never commit
+helm/values-secrets.yaml

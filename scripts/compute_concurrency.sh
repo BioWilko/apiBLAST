@@ -3,7 +3,7 @@
 # Run this once during deployment and paste the result into your .env file.
 #
 # Formula: available cores minus 2 (reserved for OS + uvicorn API process).
-# With num_threads=1 hardcoded in BLAST, one Celery worker slot = one CPU core.
+# With MMSEQS_THREADS=1 (the default), one Celery worker slot = one CPU core.
 
 set -euo pipefail
 

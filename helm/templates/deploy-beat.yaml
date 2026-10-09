@@ -1,0 +1,46 @@
+{{- $sc := .Values.defaultSecurityContext }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apiblast-beat
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apiblast-beat
+spec:
+  # A second beat would schedule expire_results twice.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: apiblast-beat
+  template:
+    metadata:
+      name: apiblast-beat
+      annotations:
+        {{- include "apiblast.checksumAnnotations" . | nindent 8 }}
+      labels:
+        app: apiblast-beat
+    spec:
+      {{- include "apiblast.securityContext" $sc | nindent 6 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      volumes:
+        - name: beat-schedule
+          emptyDir: {}
+      containers:
+        - name: beat
+          {{- include "apiblast.image" . | nindent 10 }}
+          {{- include "apiblast.resources" .Values.beat.resources | nindent 10 }}
+          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          command:
+            - celery
+            - -A
+            - app.tasks.celery_app.celery_app
+            - beat
+            - --loglevel=info
+            # The image filesystem isn't writable by the pod user
+            - --schedule=/var/run/celerybeat/celerybeat-schedule
+          volumeMounts:
+            - name: beat-schedule
+              mountPath: /var/run/celerybeat

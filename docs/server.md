@@ -1,18 +1,45 @@
 # apiBLAST — Server
 
-On-premises BLAST API server for local network users. Submit nucleotide and protein sequence alignment jobs to a shared server with async queuing, rate limiting, and hardware-aware concurrency control.
+On-premises sequence search API for local network users. Submit nucleotide and protein search jobs to a shared server with async queuing, rate limiting, and hardware-aware concurrency control. Searches run on [MMseqs2](https://github.com/soedinglab/MMseqs2) (release 18-8cc5c); the API keeps BLAST's program names and tabular output format.
 
 ## Architecture
 
 ```
-Client → FastAPI (REST) → Celery worker → BLAST+ binary → filesystem results
-                ↑                ↑
+Client → FastAPI (REST) → Celery worker (CPU) → mmseqs easy-search → filesystem results
+                ↑         Celery worker (GPU) ↗
             SlowAPI          Redis broker
           (rate limits)    (job queue + TTL)
               SQLite/PostgreSQL (job metadata)
 ```
 
-**Stack:** FastAPI · Celery · Redis · SQLAlchemy · SlowAPI · BLAST+ 2.14+
+**Stack:** FastAPI · Celery · Redis · SQLAlchemy · SlowAPI · MMseqs2 18-8cc5c
+
+### Programs
+
+| Program | Query | Database | MMseqs2 search | Runs on |
+|---|---|---|---|---|
+| `blastn` | nucleotide | nucleotide | `--search-type 3 --strand 2` | CPU |
+| `blastp` | protein | protein | `--search-type 1` | GPU when enabled, else CPU |
+| `blastx` | nucleotide (translated) | protein | `--search-type 2` | GPU when enabled, else CPU |
+
+`tblastn` and `tblastx` are not supported: they would require translating the target database. Submitting a program against a database of the wrong type returns `422`.
+
+With `MMSEQS_GPU_ENABLED=true`, `blastp` and `blastx` jobs go to the `blast_gpu` Celery queue, served by a single GPU worker; `blastn` always runs on the CPU workers (`blast` queue).
+
+---
+
+## Deployment
+
+Production runs on Kubernetes with the Helm chart in [`helm/`](../helm/README.md): API, CPU worker, GPU worker, Celery beat, Redis and PostgreSQL. See `helm/README.md` for install, configuration, degraded mode (GPU unavailable) and upgrades.
+
+### Database format
+
+**Only MMseqs2 sequence databases are supported.** BLAST databases (`makeblastdb` output: `.nsq`, `.psq`, `.nal`, … files) cannot be searched and have to be rebuilt from FASTA as MMseqs2 databases; MMseqs2 profile databases (e.g. Pfam) are not supported either. The server logs an error at startup for any configured database that is not an MMseqs2 database.
+
+Building databases is outside apiBLAST. Each entry in `databases.yml` must point to a prebuilt MMseqs2 database at `<path>/<name>`, for example one of MMseqs2's standard databases (`mmseqs databases`, e.g. SILVA, NT, UniProtKB/Swiss-Prot, UniRef90):
+
+- **Nucleotide** (`type: nucleotide`, serves `blastn`): indexed with `mmseqs createindex --search-type 3`. Without the index, searches still work but are slow; the server logs a warning.
+- **Protein** (`type: protein`, serves `blastp` and `blastx`): padded with `mmseqs makepaddedseqdb` so it can be searched on the GPU. CPU searches use it unindexed.
 
 ---
 
@@ -22,7 +49,7 @@ Client → FastAPI (REST) → Celery worker → BLAST+ binary → filesystem res
 
 - Python 3.11+
 - Redis (`brew install redis` or `docker run -p 6379:6379 redis:7`)
-- BLAST+ binaries on PATH (e.g. `brew install blast` on macOS)
+- `mmseqs` on PATH (e.g. `brew install mmseqs2`, or a release binary from [mmseqs.com/latest](https://mmseqs.com/latest))
 
 ```bash
 # 1. Install
@@ -30,13 +57,13 @@ pip install -e ".[dev]"
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env — set BLAST_BIN_DIR, BLAST_RESULT_DIR
+# Edit .env — set MMSEQS_BIN
 
 # 3. Configure databases
 cp databases.example.yml databases.yml
-# Edit databases.yml — add the BLAST databases available on this server
+# Edit databases.yml — add the MMseqs2 databases available on this server
 
-# 4. Create a test database (optional, for smoke testing)
+# 4. Create tiny test databases (optional, for smoke testing)
 ./scripts/seed_test_db.sh
 
 # 5. Initialise the metadata database
@@ -55,81 +82,7 @@ uvicorn app.main:app --reload
 
 API is at `http://localhost:8000` · Auto-generated docs at `http://localhost:8000/docs`
 
----
-
-## Docker (recommended for production)
-
-```bash
-cp .env.example .env
-# Set POSTGRES_PASSWORD, BLAST_BIN_DIR, and BLAST_RESULT_DIR
-
-cp databases.example.yml databases.yml
-# Edit databases.yml — list the BLAST databases mounted into the container
-
-cp docker-compose.override.yml.example docker-compose.override.yml
-# Edit docker-compose.override.yml — set device: to your BLAST database directory
-
-# Calculate the right worker concurrency for your server:
-./scripts/compute_concurrency.sh
-# → paste CELERY_CONCURRENCY=N into .env
-
-docker compose up -d
-```
-
-| Service | Port | Purpose |
-|---|---|---|
-| API | 8000 | REST API |
-| Flower | 5555 | Celery monitoring dashboard |
-| PostgreSQL | 5432 | Job metadata |
-| Redis | 6379 | Task broker |
-
-Scale workers horizontally: `docker compose up --scale worker=N`
-
-### Mounting BLAST databases
-
-Both the `api` and `worker` services mount the `blast_dbs` volume at `/data/blast/db` (read-only). By default this is a Docker-managed named volume — useful for testing, but holds no data from the host.
-
-To serve real databases, bind-mount your host database directory into the container. Use the provided override example rather than editing `docker-compose.yml` directly:
-
-```bash
-cp docker-compose.override.yml.example docker-compose.override.yml
-# Edit docker-compose.override.yml — set device: to your database directory
-```
-
-```yaml
-volumes:
-  blast_dbs:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: /path/to/your/blast/databases
-```
-
-Docker Compose merges `docker-compose.override.yml` automatically. `docker-compose.override.yml` is gitignored so local paths stay out of version control.
-
-Next, declare each database you want to expose in `databases.yml`. The `path` field is the directory containing the index files; the `-db` argument passed to BLAST+ is constructed as `<path>/<name>`, so the index files inside that directory must share the same base name as the `name` field (e.g. `name: nt` → files `nt.ndb`, `nt.nhr` …):
-
-```yaml
-databases:
-  - name: nt
-    path: /data/blast/db/nt
-    type: nucleotide
-    description: "NCBI nucleotide collection (~150 GB RAM when active)"
-
-  - name: nr
-    path: /data/blast/db/nr
-    type: protein
-    description: "NCBI non-redundant protein sequences (~300 GB RAM when active)"
-```
-
-Only databases declared in this file are visible to users via `GET /api/v1/databases` or accepted in job submissions.
-
-Restart the stack after editing `databases.yml`:
-
-```bash
-docker compose restart api worker
-```
+Local development runs CPU-only; leave `MMSEQS_GPU_ENABLED=false`.
 
 ---
 
@@ -144,16 +97,34 @@ POST /api/v1/jobs
 ```json
 {
   "program":    "blastn",
-  "database":   "nt_small",
+  "database":   "silva",
   "query":      ">seq1\nATGCATGCATGCATGC",
   "evalue":     1e-5,
   "max_hits":   50,
-  "outfmt":     6,
-  "extra_args": {"dust": "no"}
+  "extra_args": {"min-seq-id": 0.9}
 }
 ```
 
-Returns `201` with `job_id` and `poll_url`.
+Returns `201` with `job_id` and `poll_url`. Unknown fields are rejected with `422`.
+
+`max_hits` is the maximum number of distinct subjects reported per query.
+
+#### `extra_args`
+
+Only these MMseqs2 options are accepted; values must be numbers:
+
+| Key | Programs | Meaning |
+|---|---|---|
+| `min-seq-id` | all | Minimum sequence identity, as a fraction (0.95 = 95 %) |
+| `c` | all | Minimum alignment coverage (fraction), see `cov-mode` |
+| `cov-mode` | all | Coverage mode (0 = query and target, 1 = target, 2 = query, …) |
+| `s` | CPU jobs only | Sensitivity, 1–7.5 (default 5.7). Rejected for GPU jobs, which always run at maximum sensitivity |
+| `translation-mode` | `blastx` | `1` = translate the six full reading frames (default), `0` = translate ORFs only |
+| `translation-table` | `blastx` | Genetic code, e.g. `11` for bacteria and archaea (default `1`, standard) |
+
+#### Removed in 2.0
+
+`outfmt` and `word_size` no longer exist. For compatibility with 1.x clients, `"outfmt": 6` and `"word_size": null` are accepted and ignored; any other value returns `422`.
 
 ### Poll status
 
@@ -168,7 +139,7 @@ GET /api/v1/jobs/{job_id}
 ```
 GET /api/v1/jobs/{job_id}/results
 Accept: application/json          # parsed hits (default)
-Accept: text/tab-separated-values # raw BLAST tabular output
+Accept: text/tab-separated-values # raw tabular output, BLAST outfmt 6 columns
 ```
 
 ### Other endpoints
@@ -176,9 +147,23 @@ Accept: text/tab-separated-values # raw BLAST tabular output
 | Method | Path | Description |
 |---|---|---|
 | `DELETE` | `/api/v1/jobs/{job_id}` | Cancel a pending/running job |
-| `GET` | `/api/v1/databases` | List available BLAST databases |
+| `GET` | `/api/v1/databases` | List available databases |
 | `GET` | `/health` | Liveness check |
 | `GET` | `/health/ready` | Readiness check (Redis + DB) |
+
+---
+
+## Results compared with BLAST
+
+Results use BLAST's 12 tabular columns and coordinate conventions (for a reverse-strand `blastn` hit, `s_start > s_end`; for a minus-frame `blastx` hit, `q_start > q_end`), but they are not identical to BLAST's:
+
+- **Sensitivity:** CPU searches at the default sensitivity (`s` 5.7) can miss distant homologs and very short queries that BLAST finds. Raise `s` (up to 7.5) for harder searches.
+- **E-values and bit scores** come from different statistics and are not directly comparable with BLAST values; thresholds tuned on BLAST may need revisiting. Bit scores are whole numbers.
+- **One alignment per query–subject pair**, where BLAST may report several HSPs.
+- **Low-complexity masking** uses tantan rather than DUST/SEG; highly repetitive queries may return no hits.
+- **Subject IDs** are the first word of each database FASTA header.
+- **GPU and CPU results differ** for `blastp`/`blastx`, because the GPU uses a different prefilter at maximum sensitivity.
+- **blastx is not frameshift-aware.** Each frame (or ORF) is aligned separately, so genes in error-prone sequence (long reads, draft assemblies) give fragmented, lower-scoring hits. In ORF mode (`translation-mode: 0`), ORFs shorter than 30 codons are dropped, so queries under ~90 nt find nothing; the default frame mode has no such limit.
 
 ---
 
@@ -191,8 +176,8 @@ Per-IP limits enforced via SlowAPI (Redis-backed):
 | Submissions per minute | 10 |
 | Submissions per hour | 100 |
 | Global queue depth | `CELERY_CONCURRENCY × 4` |
-| Max query length (nt) | 500,000 bp |
-| Max query length (aa) | 100,000 residues |
+| Max query length (nt, `blastn`/`blastx`) | 500,000 bp |
+| Max query length (aa, `blastp`) | 100,000 residues |
 | Max sequences per job | 100 |
 
 `429` responses include a `Retry-After: 60` header.
@@ -204,7 +189,7 @@ Per-IP limits enforced via SlowAPI (Redis-backed):
 
 ### Concurrency
 
-BLAST's `-num_threads` is hardcoded to `1`. Only the word-matching phase is multi-threaded; using multiple Celery workers is consistently more efficient. Worker concurrency is set via:
+Each search runs with `MMSEQS_THREADS` threads (default `1`); parallelism comes from Celery worker processes. Worker concurrency is set via:
 
 ```bash
 ./scripts/compute_concurrency.sh
@@ -213,16 +198,11 @@ BLAST's `-num_threads` is hardcoded to `1`. Only the word-matching phase is mult
 
 Rule of thumb: `nproc - 2` (reserve 2 cores for OS + API process).
 
+The GPU worker runs one job at a time (Celery concurrency 1) with its own `MMSEQS_THREADS`, set in the Helm chart's `gpuWorker.threads`.
+
 ### Memory
 
-Large BLAST databases (nt, nr) are memory-mapped by the OS on first access. Ensure the server has enough RAM to hold the largest database you expect to use concurrently. A rough guide:
-
-| Database | Approximate RAM needed |
-|---|---|
-| 16S rRNA | < 1 GB |
-| refseq_rna | ~20 GB |
-| nt | ~150 GB |
-| nr | ~300 GB |
+Database and index files are memory-mapped and benefit from the OS page cache. MMseqs2 index files are considerably larger than the sequence data, so size worker memory for the largest indexed nucleotide database in use.
 
 The server enforces a `MEMORY_FLOOR_MB` hard floor (default 512 MB) — jobs are rejected with `FAILURE` if available RAM drops below this.
 
@@ -240,46 +220,47 @@ All settings are environment variables (`.env` file or system env):
 |---|---|---|
 | `DATABASE_URL` | `sqlite:///./apiblast.db` | Switch to PostgreSQL for production |
 | `REDIS_URL` | `redis://localhost:6379/0` | |
-| `BLAST_BIN_DIR` | `/opt/homebrew/bin` | Directory containing `blastn`, `blastp`, etc. |
-| `BLAST_DB_CONFIG` | `databases.yml` | Path to the database configuration file |
-| `BLAST_RESULT_DIR` | `/data/blast/results` | Writable directory for job results |
-| `CELERY_CONCURRENCY` | `4` | Number of parallel BLAST workers |
-| `BLAST_SOFT_TIMEOUT_S` | `3600` | SIGTERM after this many seconds |
-| `BLAST_HARD_TIMEOUT_S` | `3900` | SIGKILL (must be > soft) |
+| `MMSEQS_BIN` | `/usr/local/bin/mmseqs` | Path to the `mmseqs` binary |
+| `MMSEQS_THREADS` | `1` | Threads per search |
+| `MMSEQS_GPU_ENABLED` | `false` | Route `blastp`/`blastx` to the `blast_gpu` queue (needs a GPU worker) |
+| `DB_CONFIG` | `databases.yml` | Path to the database configuration file |
+| `RESULT_DIR` | `/data/results` | Writable directory for job results |
+| `CELERY_CONCURRENCY` | `4` | Number of parallel search workers |
+| `JOB_SOFT_TIMEOUT_S` | `3600` | SIGTERM after this many seconds |
+| `JOB_HARD_TIMEOUT_S` | `3900` | SIGKILL (must be > soft) |
 | `MAX_QUEUE_DEPTH` | `16` | Max pending + running jobs before `503` |
 | `MAX_CONCURRENT_DBS` | `3` | Max distinct databases active at once |
 | `MEMORY_FLOOR_MB` | `512` | Minimum free RAM to accept a job |
 | `RESULT_TTL_S` | `86400` | Result file retention (default 24 h) |
-| `FLOWER_BASIC_AUTH` | `admin:changeme` | Flower dashboard credentials — **change this** |
 
 ---
 
-## Adding a new BLAST database
+## Adding a database
 
-Databases are defined explicitly in `databases.yml` (path set by `BLAST_DB_CONFIG`). Add an entry and restart the API — no code changes required:
+Databases are defined explicitly in `databases.yml` (path set by `DB_CONFIG`). Add an entry and restart the API — no code changes required:
 
 ```yaml
 databases:
-  - name: refseq_rna
-    path: /data/blast/db/refseq_rna
+  - name: silva
+    path: /data/db/silva
     type: nucleotide          # nucleotide | protein
-    description: "NCBI RefSeq RNA sequences (~20 GB RAM when active)"
+    description: "SILVA ribosomal RNA"
 ```
 
-`path` is the directory; BLAST+ receives `<path>/<name>` as its `-db` argument, so the index files must be named `refseq_rna.*` inside that directory. Verify the entry is visible:
+`path` is the directory; MMseqs2 searches the database at `<path>/<name>`, so the database files must be named `silva`, `silva.dbtype`, `silva.index`, `silva_h`, … inside that directory (see [Database format](#database-format)). Verify the entry is visible:
 
 ```bash
 curl http://localhost:8000/api/v1/databases
 ```
 
-See `databases.example.yml` for a full annotated example with common NCBI databases.
+See `databases.example.yml` for a full annotated example.
 
 ---
 
 ## Development
 
 ```bash
-# Run all tests (no Redis or BLAST+ required)
+# Run all tests (no Redis or MMseqs2 required; e2e tests are skipped)
 pytest
 
 # Run only unit tests
@@ -288,9 +269,12 @@ pytest tests/unit/
 # Run only integration tests
 pytest tests/integration/
 
-# End-to-end test (requires live BLAST+ and Redis)
-./scripts/seed_test_db.sh
+# End-to-end searches against real MMseqs2 (needs mmseqs on PATH; the tests
+# build their own tiny databases with scripts/seed_test_db.sh)
 pytest tests/e2e/
+
+# Include the GPU end-to-end test (on a machine with an NVIDIA GPU)
+APIBLAST_GPU_TESTS=1 pytest tests/e2e/
 
 # Lint
 ruff check .

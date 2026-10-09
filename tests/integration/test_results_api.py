@@ -56,7 +56,6 @@ def _make_job(session, status="SUCCESS", result_path="/tmp/result.tsv", expires_
         num_sequences=1,
         evalue=1e-5,
         max_hits=50,
-        outfmt=6,
         submitter_ip="127.0.0.1",
         submitted_at=datetime.now(timezone.utc),
         status=status,

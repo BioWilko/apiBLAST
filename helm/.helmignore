@@ -1,0 +1,10 @@
+.DS_Store
+.git/
+.gitignore
+.helmignore
+*.orig
+*.tgz
+
+# Gitignored files containing real credentials
+values-secrets.yaml
+values-*.local.yaml

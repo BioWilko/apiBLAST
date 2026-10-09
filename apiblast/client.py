@@ -119,7 +119,7 @@ class BLASTClient:
         return self._request("get", "/health").json()
 
     def databases(self) -> list[Database]:
-        """List BLAST databases available on the server.
+        """List databases available on the server.
 
         Returns:
             A list of :class:`~apiblast.models.Database` objects, one per
@@ -146,8 +146,6 @@ class BLASTClient:
         query: str,
         evalue: float = 1e-5,
         max_hits: int = 50,
-        word_size: int | None = None,
-        outfmt: int = 6,
         extra_args: dict[str, str | int | float] | None = None,
     ) -> Job:
         """Submit a BLAST job and return immediately with the queued job.
@@ -157,16 +155,16 @@ class BLASTClient:
         to track progress, then call :meth:`results` when done.
 
         Args:
-            program: BLAST program to run. One of ``blastn``, ``blastp``,
-                ``blastx``, ``tblastn``, or ``tblastx``.
+            program: Search program. One of ``blastn`` (nucleotide
+                database), ``blastp`` or ``blastx`` (protein database).
             database: Database name as returned by :meth:`databases`.
             query: FASTA-formatted query string (one or more sequences).
             evalue: E-value cutoff — hits with e-value above this are excluded.
-            max_hits: Maximum number of hits to return per query.
-            word_size: Word size override. Uses the BLAST default when ``None``.
-            outfmt: BLAST output format code (default ``6`` = tabular).
-            extra_args: Additional BLAST command-line flags as key/value pairs,
-                e.g. ``{"dust": "no", "perc_identity": 95}``.
+            max_hits: Maximum number of subjects to return per query.
+            extra_args: Additional MMseqs2 options as key/value pairs, e.g.
+                ``{"min-seq-id": 0.95}`` or, for blastx,
+                ``{"translation-table": 11}``. Only options the server
+                allows are accepted.
 
         Returns:
             A :class:`~apiblast.models.Job` representing the queued job.
@@ -191,11 +189,8 @@ class BLASTClient:
             "query": query,
             "evalue": evalue,
             "max_hits": max_hits,
-            "outfmt": outfmt,
             "extra_args": extra_args or {},
         }
-        if word_size is not None:
-            payload["word_size"] = word_size
         data = self._request("post", "/api/v1/jobs", json=payload).json()
         return self.status(data["job_id"])
 
@@ -317,11 +312,11 @@ class BLASTClient:
         return BlastResult._from_dict(data)
 
     def results_tsv(self, job_id: str) -> str:
-        """Fetch raw tabular (outfmt 6) output for a completed job.
+        """Fetch raw tabular output for a completed job.
 
-        Returns the server's raw TSV text without any parsing. Useful when
-        the job was submitted with ``outfmt=6`` and downstream tools expect
-        plain BLAST tabular format.
+        Returns the server's raw TSV text without any parsing: the 12 columns
+        of BLAST's tabular format (``-outfmt 6``), with no header. Useful when
+        downstream tools expect plain BLAST tabular output.
 
         Args:
             job_id: Job identifier as returned by :meth:`submit`.
@@ -387,8 +382,6 @@ class BLASTClient:
         query: str,
         evalue: float = 1e-5,
         max_hits: int = 50,
-        word_size: int | None = None,
-        outfmt: int = 6,
         extra_args: dict[str, str | int | float] | None = None,
         poll_interval: float = 2.0,
         timeout: float | None = None,
@@ -401,16 +394,16 @@ class BLASTClient:
         for most use cases.
 
         Args:
-            program: BLAST program to run. One of ``blastn``, ``blastp``,
-                ``blastx``, ``tblastn``, or ``tblastx``.
+            program: Search program. One of ``blastn`` (nucleotide
+                database), ``blastp`` or ``blastx`` (protein database).
             database: Database name as returned by :meth:`databases`.
             query: FASTA-formatted query string (one or more sequences).
             evalue: E-value cutoff — hits with e-value above this are excluded.
-            max_hits: Maximum number of hits to return per query.
-            word_size: Word size override. Uses the BLAST default when ``None``.
-            outfmt: BLAST output format code (default ``6`` = tabular).
-            extra_args: Additional BLAST command-line flags as key/value pairs,
-                e.g. ``{"dust": "no", "perc_identity": 95}``.
+            max_hits: Maximum number of subjects to return per query.
+            extra_args: Additional MMseqs2 options as key/value pairs, e.g.
+                ``{"min-seq-id": 0.95}`` or, for blastx,
+                ``{"translation-table": 11}``. Only options the server
+                allows are accepted.
             poll_interval: Initial polling interval in seconds for :meth:`wait`.
             timeout: Client-side timeout in seconds. Raises
                 :exc:`~apiblast.exceptions.WaitTimeoutError` if elapsed.
@@ -450,8 +443,6 @@ class BLASTClient:
             query=query,
             evalue=evalue,
             max_hits=max_hits,
-            word_size=word_size,
-            outfmt=outfmt,
             extra_args=extra_args,
         )
         final = self.wait(
@@ -480,8 +471,8 @@ class BLASTClient:
         Args:
             path: Path to a FASTA file. Accepts both ``str`` and
                 :class:`pathlib.Path`.
-            program: BLAST program to run. One of ``blastn``, ``blastp``,
-                ``blastx``, ``tblastn``, or ``tblastx``.
+            program: Search program. One of ``blastn`` (nucleotide
+                database), ``blastp`` or ``blastx`` (protein database).
             database: Database name as returned by :meth:`databases`.
             **kwargs: Additional keyword arguments forwarded to :meth:`blast`.
 

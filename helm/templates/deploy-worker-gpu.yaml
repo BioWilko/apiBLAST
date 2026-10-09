@@ -1,0 +1,58 @@
+{{- if .Values.gpuWorker.enabled }}
+{{- $sc := .Values.defaultSecurityContext }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apiblast-worker-gpu
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apiblast-worker-gpu
+spec:
+  # Recreate: with one GPU, a rolling update's new pod could never schedule.
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: apiblast-worker-gpu
+  template:
+    metadata:
+      name: apiblast-worker-gpu
+      annotations:
+        {{- include "apiblast.checksumAnnotations" . | nindent 8 }}
+      labels:
+        app: apiblast-worker-gpu
+    spec:
+      {{- include "apiblast.securityContext" $sc | nindent 6 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      volumes:
+        {{- include "apiblast.appVolumes" . | nindent 8 }}
+      {{- if .Values.volumes.initDirs.enabled }}
+      initContainers:
+        {{- include "apiblast.initDirsContainer" (dict "root" $ "subPaths" (list .Values.volumes.sharedTeam.subPaths.results) "owner" (printf "%v:%v" $sc.runAsUser $sc.runAsGroup)) | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker-gpu
+          {{- include "apiblast.image" . | nindent 10 }}
+          {{- include "apiblast.resources" (merge (dict "gpu" 1) (deepCopy .Values.gpuWorker.resources)) | nindent 10 }}
+          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          env:
+            - name: MMSEQS_THREADS
+              value: {{ .Values.gpuWorker.threads | toString | quote }}
+            - name: CELERY_CONCURRENCY
+              value: "1"
+          command:
+            - celery
+            - -A
+            - app.tasks.celery_app.celery_app
+            - worker
+            - --loglevel=info
+            - --queues=blast_gpu
+            - --concurrency=1
+            - --prefetch-multiplier=1
+            - --hostname=worker-gpu@%h
+          volumeMounts:
+            {{- include "apiblast.appVolumeMounts" . | nindent 12 }}
+{{- end }}

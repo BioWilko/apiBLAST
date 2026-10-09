@@ -68,14 +68,16 @@ def _poll_until_done(client: CliClient, job_id: str) -> dict:
 @app.command()
 def submit(
     fasta_file: Annotated[Path, typer.Argument(help="FASTA file containing query sequence(s)")],
-    program: Annotated[str, typer.Option("--program", "-p", help="BLAST program")] = "blastn",
+    program: Annotated[str, typer.Option(
+        "--program", "-p", help="blastn (nucleotide DB), blastp or blastx (protein DB)"
+    )] = "blastn",
     db: Annotated[str, typer.Option("--db", "-d", help="Database name (see `apiblast databases`)")] = "",
     evalue: Annotated[float, typer.Option(help="E-value threshold")] = 1e-5,
-    max_hits: Annotated[int, typer.Option(help="Maximum number of hits to return")] = 50,
-    word_size: Annotated[Optional[int], typer.Option(help="Word size override")] = None,
-    outfmt: Annotated[int, typer.Option(help="Output format (default: 6 = tabular)")] = 6,
+    max_hits: Annotated[int, typer.Option(help="Maximum subjects to return per query")] = 50,
     extra_arg: Annotated[Optional[list[str]], typer.Option(
-        "--extra-arg", help="Extra BLAST argument as key=value (repeatable)"
+        "--extra-arg",
+        help="Extra MMseqs2 option as key=value (repeatable), e.g. min-seq-id=0.9, "
+             "s=7.5, or for blastx translation-table=11",
     )] = None,
     wait: Annotated[bool, typer.Option("--wait", help="Block until job completes and show results")] = False,
     format: Annotated[str, typer.Option("--format", help="Output format for --wait: table|tsv|json")] = "table",
@@ -108,8 +110,6 @@ def submit(
             query=query,
             evalue=evalue,
             max_hits=max_hits,
-            word_size=word_size,
-            outfmt=outfmt,
             extra_args=extra,
         )
     except CliError as e:
@@ -225,7 +225,7 @@ def results(
 
 @app.command()
 def databases() -> None:
-    """List available BLAST databases on the server."""
+    """List available databases on the server."""
     client = _make_client()
     try:
         dbs = client.list_databases()

@@ -1,0 +1,50 @@
+{{- $sc := .Values.defaultSecurityContext }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apiblast-worker
+  namespace: {{ .Values.namespace }}
+  labels:
+    app: apiblast-worker
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: apiblast-worker
+  template:
+    metadata:
+      name: apiblast-worker
+      annotations:
+        {{- include "apiblast.checksumAnnotations" . | nindent 8 }}
+      labels:
+        app: apiblast-worker
+    spec:
+      {{- include "apiblast.securityContext" $sc | nindent 6 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      volumes:
+        {{- include "apiblast.appVolumes" . | nindent 8 }}
+      {{- if .Values.volumes.initDirs.enabled }}
+      initContainers:
+        {{- include "apiblast.initDirsContainer" (dict "root" $ "subPaths" (list .Values.volumes.sharedTeam.subPaths.results) "owner" (printf "%v:%v" $sc.runAsUser $sc.runAsGroup)) | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: worker
+          {{- include "apiblast.image" . | nindent 10 }}
+          {{- include "apiblast.resources" .Values.worker.resources | nindent 10 }}
+          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          command:
+            - celery
+            - -A
+            - app.tasks.celery_app.celery_app
+            - worker
+            - --loglevel=info
+            - --queues=blast,celery
+            - --concurrency={{ .Values.celery.concurrency }}
+            - --prefetch-multiplier=1
+            - --hostname=worker@%h
+          volumeMounts:
+            {{- include "apiblast.appVolumeMounts" . | nindent 12 }}

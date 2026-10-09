@@ -15,7 +15,7 @@ from app.core.limiter import limiter
 async def lifespan(app: FastAPI):
     # Ensure result directory exists at startup
     settings = get_settings()
-    settings.BLAST_RESULT_DIR.mkdir(parents=True, exist_ok=True)
+    settings.RESULT_DIR.mkdir(parents=True, exist_ok=True)
     yield
 
 

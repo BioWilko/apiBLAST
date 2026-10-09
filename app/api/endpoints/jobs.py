@@ -9,9 +9,16 @@ from app.config import get_settings
 from app.core.limiter import limiter
 from app.deps import get_db
 from app.models.db import Job
-from app.models.schemas import CancelResponse, JobCreate, JobStatus, JobSubmitted
+from app.models.schemas import (
+    CPU_ONLY_ARGS,
+    GPU_PROGRAMS,
+    CancelResponse,
+    JobCreate,
+    JobStatus,
+    JobSubmitted,
+)
 from app.services import result_store
-from app.services.db_scanner import database_exists
+from app.services.db_scanner import get_database
 
 router = APIRouter(tags=["jobs"])
 
@@ -62,12 +69,28 @@ def submit_job(
             headers={"Retry-After": "60"},
         )
 
-    # Validate that the requested database actually exists on disk
-    if not database_exists(job_in.database):
+    # Validate that the requested database exists and suits the program
+    database = get_database(job_in.database)
+    if database is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"BLAST database {job_in.database!r} not found on this server. "
+            detail=f"Database {job_in.database!r} not found on this server. "
                    f"Use GET /api/v1/databases to list available databases.",
+        )
+    if job_in.program not in database.program_types:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Program {job_in.program!r} cannot search database {job_in.database!r}; "
+                   f"supported programs: {', '.join(database.program_types)}",
+        )
+
+    use_gpu = settings.MMSEQS_GPU_ENABLED and job_in.program in GPU_PROGRAMS
+    cpu_only = sorted(CPU_ONLY_ARGS & job_in.extra_args.keys())
+    if use_gpu and cpu_only:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"extra_args {cpu_only} do not apply to GPU searches, "
+                   f"which always run at maximum sensitivity",
         )
 
     # Compute query metrics
@@ -83,8 +106,6 @@ def submit_job(
         num_sequences=len(records),
         evalue=job_in.evalue,
         max_hits=job_in.max_hits,
-        word_size=job_in.word_size,
-        outfmt=job_in.outfmt,
         extra_args_json=json.dumps(job_in.extra_args) if job_in.extra_args else None,
         submitter_ip=request.client.host if request.client else "unknown",
         submitted_at=datetime.now(timezone.utc),
@@ -99,7 +120,12 @@ def submit_job(
 
     # Dispatch Celery task
     from app.tasks.blast import blast_run
-    blast_run.apply_async(args=[job.id], task_id=None, queue="blast")
+    blast_run.apply_async(
+        args=[job.id],
+        kwargs={"use_gpu": use_gpu},
+        task_id=None,
+        queue="blast_gpu" if use_gpu else "blast",
+    )
 
     queue_pos = _queue_pos(db)
     return JobSubmitted(

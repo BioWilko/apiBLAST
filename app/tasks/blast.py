@@ -1,4 +1,6 @@
-"""Celery task that executes a BLAST job end-to-end."""
+"""Celery task that executes a search job end-to-end."""
+import logging
+import shutil
 import subprocess
 from datetime import datetime, timezone, timedelta
 
@@ -10,6 +12,12 @@ from app.core.database import SessionLocal
 from app.models.db import Job
 from app.services import blast_runner, result_store
 from app.tasks.celery_app import celery_app
+
+logger = logging.getLogger(__name__)
+
+# Redelivered messages for jobs in these states are skipped. RUNNING jobs are
+# re-run: their worker died before acking.
+_FINISHED_STATUSES = {"SUCCESS", "FAILURE", "TIMEOUT", "REVOKED"}
 
 
 def _guard_memory(settings) -> str | None:
@@ -23,16 +31,22 @@ def _guard_memory(settings) -> str | None:
 @celery_app.task(
     bind=True,
     name="app.tasks.blast.blast_run",
-    max_retries=0,  # BLAST jobs are not safely idempotent by default
+    max_retries=0,  # search jobs are not safely idempotent by default
     throws=(SoftTimeLimitExceeded,),
 )
-def blast_run(self, job_id: str) -> dict:
+def blast_run(self, job_id: str, use_gpu: bool = False) -> dict:
     settings = get_settings()
     db = SessionLocal()
+    job: Job | None = None
+    tmp_dir = result_store.tmp_path(job_id)
     try:
-        job: Job | None = db.get(Job, job_id)
+        job = db.get(Job, job_id)
         if job is None:
             raise ValueError(f"Job {job_id} not found in database")
+
+        if job.status in _FINISHED_STATUSES:
+            logger.info("Skipping job %s: already %s", job_id, job.status)
+            return {"status": job.status, "job_id": job_id, "skipped": True}
 
         # ── Memory guard ──────────────────────────────────────────────────────
         mem_error = _guard_memory(settings)
@@ -55,11 +69,12 @@ def blast_run(self, job_id: str) -> dict:
         if not q_path.exists():
             raise FileNotFoundError(f"Query file missing for job {job_id}: {q_path}")
 
-        # ── Build and run BLAST command ───────────────────────────────────────
-        cmd = blast_runner.build_blast_command(job, q_path, r_path)
+        # ── Build and run MMseqs2 command ─────────────────────────────────────
+        cmd = blast_runner.build_blast_command(job, q_path, r_path, tmp_dir, use_gpu=use_gpu)
+        logger.info("Running job %s (%s) on %s", job_id, job.program, "GPU" if use_gpu else "CPU")
 
         try:
-            proc = blast_runner.run_blast(cmd, timeout_s=settings.BLAST_HARD_TIMEOUT_S)
+            proc = blast_runner.run_blast(cmd, timeout_s=settings.JOB_HARD_TIMEOUT_S)
         except subprocess.TimeoutExpired:
             job.status = "TIMEOUT"
             job.finished_at = datetime.now(timezone.utc)
@@ -75,6 +90,7 @@ def blast_run(self, job_id: str) -> dict:
             return {"status": "FAILURE", "job_id": job_id}
 
         # ── Success ───────────────────────────────────────────────────────────
+        result_store.finalise_results(r_path, job.program, job.max_hits)
         job.status = "SUCCESS"
         job.finished_at = datetime.now(timezone.utc)
         job.result_path = str(r_path)
@@ -98,4 +114,5 @@ def blast_run(self, job_id: str) -> dict:
         raise
 
     finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
         db.close()

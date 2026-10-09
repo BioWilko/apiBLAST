@@ -7,7 +7,7 @@ from datetime import datetime
 
 @dataclass
 class BlastHit:
-    """A single BLAST alignment hit from tabular (outfmt 6) output.
+    """A single alignment hit in BLAST tabular (outfmt 6) layout.
 
     Corresponds to one row in BLAST's tabular output. The ``evalue`` field is
     stored as a string to preserve scientific notation exactly as returned by
@@ -177,7 +177,7 @@ class Job:
 
 @dataclass
 class Database:
-    """Metadata for a BLAST database available on the server.
+    """Metadata for a database available on the server.
 
     Returned as elements of the list from
     :meth:`~apiblast.BLASTClient.databases`.
@@ -185,8 +185,9 @@ class Database:
     Attributes:
         name: Unique database identifier used when submitting jobs.
         description: Human-readable description of the database contents.
-        program_types: BLAST programs compatible with this database
-            (e.g. ``["blastn", "tblastn"]`` for a nucleotide database).
+        program_types: Programs compatible with this database:
+            ``["blastn"]`` for a nucleotide database, ``["blastp", "blastx"]``
+            for a protein database.
         path: Absolute path to the database files on the server.
         size_bytes: Total size of the database files in bytes.
         last_updated: ISO 8601 timestamp of the last database update, or

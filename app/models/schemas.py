@@ -2,7 +2,7 @@ import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.config import get_settings
 
@@ -11,12 +11,24 @@ _FASTA_HEADER_RE = re.compile(r"^>.*")
 _NT_CHARS = re.compile(r"^[ACGTURYSWKMBDHVNacgturyswkmbdhvn\s]+$")
 _AA_CHARS = re.compile(r"^[ACDEFGHIKLMNPQRSTVWYXacdefghiklmnpqrstvwyx*\s]+$")
 
-_NT_PROGRAMS = {"blastn"}
-_AA_QUERY_PROGRAMS = {"blastp", "blastx"}
-_NT_QUERY_PROGRAMS = {"tblastn", "tblastx"}
+PROGRAMS = ("blastn", "blastp", "blastx")
+# Routed to the blast_gpu queue when MMSEQS_GPU_ENABLED is set. MMseqs2 has no
+# GPU path for nucleotide searches.
+GPU_PROGRAMS = {"blastp", "blastx"}
+_NT_QUERY_PROGRAMS = {"blastn", "blastx"}
+# Would need the target DB translated
+_UNSUPPORTED_PROGRAMS = {"tblastn", "tblastx"}
 
-# Keys that would override critical CLI flags – blocked in extra_args
-_BLOCKED_ARGS = {"out", "query", "db", "num_threads", "subject", "remote"}
+# MMseqs2 options accepted in extra_args; anything else is rejected.
+ALLOWED_ARGS = {"min-seq-id", "c", "cov-mode", "s", "translation-mode", "translation-table"}
+# GPU searches always run at maximum sensitivity
+CPU_ONLY_ARGS = {"s"}
+BLASTX_ARGS = {"translation-mode", "translation-table"}
+TRANSLATION_TABLES = {*range(1, 7), *range(9, 17), *range(21, 32)}
+
+# Fields removed in 2.0 → the 1.x client default, which is dropped silently.
+# Any other value is rejected.
+_REMOVED_FIELDS = {"outfmt": 6, "word_size": None}
 
 
 def _parse_fasta(text: str) -> list[tuple[str, str]]:
@@ -43,14 +55,37 @@ def _parse_fasta(text: str) -> list[tuple[str, str]]:
 # ── Request ───────────────────────────────────────────────────────────────────
 
 class JobCreate(BaseModel):
-    program: Literal["blastn", "blastp", "blastx", "tblastn", "tblastx"]
+    model_config = ConfigDict(extra="forbid")
+
+    program: Literal["blastn", "blastp", "blastx"]
     database: str = Field(min_length=1, max_length=128)
     query: str = Field(min_length=1)
     evalue: float = Field(default=1e-5, ge=0, le=10)
     max_hits: int = Field(default=50, ge=1, le=5000)
-    word_size: int | None = Field(default=None, ge=2, le=28)
-    outfmt: int = Field(default=6, ge=0, le=18)
     extra_args: dict[str, str | int | float] = Field(default_factory=dict)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_removed_fields(cls, data):
+        if not isinstance(data, dict):
+            return data
+        data = dict(data)
+        for field, legacy_default in _REMOVED_FIELDS.items():
+            if field not in data:
+                continue
+            if data[field] != legacy_default:
+                raise ValueError(f"'{field}' was removed in apiBLAST 2.0")
+            del data[field]
+        return data
+
+    @field_validator("program", mode="before")
+    @classmethod
+    def reject_unsupported_programs(cls, v):
+        if v in _UNSUPPORTED_PROGRAMS:
+            raise ValueError(
+                f"program {v!r} is not supported: it would require translating the target database"
+            )
+        return v
 
     @field_validator("query")
     @classmethod
@@ -73,15 +108,9 @@ class JobCreate(BaseModel):
         settings = get_settings()
         records = _parse_fasta(self.query)
         total = sum(len(seq) for _, seq in records)
-        if self.program in _NT_PROGRAMS or self.program in _NT_QUERY_PROGRAMS:
-            # blastn queries nucleotides; tblastn/tblastx query proteins against NT db
-            # For length checking: blastn = NT query, tblastn = AA query
-            limit = (
-                settings.MAX_QUERY_LENGTH_AA
-                if self.program == "tblastn"
-                else settings.MAX_QUERY_LENGTH_NT
-            )
-            label = "amino acids" if self.program == "tblastn" else "nucleotides"
+        if self.program in _NT_QUERY_PROGRAMS:
+            limit = settings.MAX_QUERY_LENGTH_NT
+            label = "nucleotides"
         else:
             limit = settings.MAX_QUERY_LENGTH_AA
             label = "amino acids"
@@ -93,14 +122,45 @@ class JobCreate(BaseModel):
 
     @field_validator("extra_args")
     @classmethod
-    def block_dangerous_args(cls, v: dict) -> dict:
-        for key in v:
-            normalised = key.lstrip("-")
-            if normalised in _BLOCKED_ARGS:
-                raise ValueError(
-                    f"extra_arg '{key}' is not permitted (would override a protected flag)"
-                )
-        return v
+    def allow_listed_args(cls, v: dict) -> dict:
+        normalised: dict[str, str | int | float] = {}
+        for key, val in v.items():
+            name = key.lstrip("-")
+            if name not in ALLOWED_ARGS:
+                allowed = ", ".join(sorted(ALLOWED_ARGS))
+                raise ValueError(f"extra_arg '{key}' is not permitted; allowed: {allowed}")
+            if isinstance(val, bool) or not _is_number(val):
+                raise ValueError(f"extra_arg '{key}' must be a number")
+            normalised[name] = val
+        mode = normalised.get("translation-mode")
+        if mode is not None and str(mode) not in ("0", "1"):
+            raise ValueError("extra_arg 'translation-mode' must be 0 (ORFs) or 1 (full frames)")
+        if "translation-table" in normalised and not _is_table(normalised["translation-table"]):
+            raise ValueError("extra_arg 'translation-table' is not a valid genetic code table")
+        return normalised
+
+    @model_validator(mode="after")
+    def blastx_only_args(self) -> "JobCreate":
+        if self.program != "blastx":
+            misplaced = sorted(BLASTX_ARGS & self.extra_args.keys())
+            if misplaced:
+                raise ValueError(f"extra_args {misplaced} are only valid for blastx")
+        return self
+
+
+def _is_number(val) -> bool:
+    try:
+        float(val)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def _is_table(val) -> bool:
+    try:
+        return int(str(val)) in TRANSLATION_TABLES
+    except ValueError:
+        return False
 
 
 # ── Responses ─────────────────────────────────────────────────────────────────

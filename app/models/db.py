@@ -17,19 +17,17 @@ class Job(Base):
     # Status: PENDING | RUNNING | SUCCESS | FAILURE | REVOKED | TIMEOUT
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="PENDING", index=True)
 
-    # BLAST parameters
+    # Search parameters
     program: Mapped[str] = mapped_column(String(16), nullable=False)
     database: Mapped[str] = mapped_column(String(128), nullable=False)
     query_length: Mapped[int] = mapped_column(Integer, nullable=False)
     num_sequences: Mapped[int] = mapped_column(Integer, nullable=False)
     evalue: Mapped[float] = mapped_column(Float, nullable=False, default=1e-5)
     max_hits: Mapped[int] = mapped_column(Integer, nullable=False, default=50)
-    word_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    outfmt: Mapped[int] = mapped_column(Integer, nullable=False, default=6)
     extra_args_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Stored separately so we don't expose the raw FASTA in the metadata DB.
-    # The query file lives at BLAST_RESULT_DIR/{id}/query.fasta
+    # The query file lives at RESULT_DIR/{id}/query.fasta
     submitter_ip: Mapped[str] = mapped_column(String(45), nullable=False)
 
     # Timestamps — stored as TIMESTAMPTZ (timezone=True) so Postgres preserves UTC offset

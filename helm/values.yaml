@@ -1,0 +1,175 @@
+namespace: ns-cli-climb-gre-se
+
+image:
+  repository: quay.io/climb-tre/apiblast
+  tag: "2.0.0"
+  pullPolicy: IfNotPresent
+
+# Image for the init-dirs initContainer (see volumes.initDirs).
+initImage:
+  repository: busybox
+  tag: "1.36"
+  pullPolicy: IfNotPresent
+
+# Applies to every pod; the GPU worker's nvidia.com/gpu request places it on
+# the A100 node.
+nodeSelector:
+  hub.jupyter.org/node-purpose: user-compute
+
+defaultSecurityContext:
+  runAsUser: 1000
+  runAsGroup: 100
+  fsGroup: 100
+  runAsNonRoot: true
+
+volumes:
+  sharedTeam:
+    claimName: cephfs-shared-team
+    # Folders inside cephfs-shared-team, mounted via subPath.
+    subPaths:
+      db: apiblast/db              # MMseqs2 databases, mounted read-only
+      results: apiblast/results
+      postgres: apiblast/postgres  # PGDATA is a subdirectory of this
+      redis: apiblast/redis
+  # Root initContainer that creates the results/postgres/redis folders and
+  # chowns them to the pod's uid:gid. Missing subPaths would otherwise be
+  # created root-owned.
+  initDirs:
+    enabled: true
+
+# Supplied via the gitignored values-secrets.yaml (see values-secrets.yaml.example).
+credentials:
+  secretKey: ""
+  postgresPassword: ""
+  databaseUrl: ""
+
+# ── Application settings (rendered into the apiblast-config ConfigMap) ───────
+# REDIS_URL, RESULT_DIR, DB_CONFIG, CELERY_CONCURRENCY and
+# MMSEQS_GPU_ENABLED are set by the chart and cannot be set here.
+config:
+  APP_ENV: production
+  LOG_LEVEL: INFO
+  MMSEQS_BIN: /usr/local/bin/mmseqs
+  # CPU worker only; the GPU worker uses gpuWorker.threads.
+  MMSEQS_THREADS: 1
+  JOB_SOFT_TIMEOUT_S: 3600
+  JOB_HARD_TIMEOUT_S: 3900
+  MAX_QUERY_LENGTH_NT: 500000
+  MAX_QUERY_LENGTH_AA: 100000
+  MAX_SEQUENCES_PER_JOB: 100
+  MAX_QUEUE_DEPTH: 16
+  MAX_CONCURRENT_DBS: 3
+  MEMORY_FLOOR_MB: 512
+  RESULT_TTL_S: 86400
+  RATE_LIMIT_SUBMIT_PER_MINUTE: 10
+  RATE_LIMIT_SUBMIT_PER_HOUR: 100
+
+# Rendered to /etc/apiblast/databases.yml. Each entry: name, type
+# (nucleotide|protein), optional description and path. path is the directory
+# holding the DB (the app searches <path>/<name>) and defaults to
+# /data/db/<name>, i.e. apiblast/db/<name>/<name> on cephfs-shared-team.
+# Example:
+#   databases:
+#     - name: silva
+#       type: nucleotide
+#       description: "SILVA ribosomal RNA"
+#     - name: swissprot
+#       type: protein
+#       description: "UniProt Swiss-Prot (makepaddedseqdb)"
+#       path: /data/db/swissprot
+databases: []
+
+# ── Components ────────────────────────────────────────────────────────────────
+# resources: requests.{cpu,memory} (required), limits.{enabled,cpu,memory}
+# (optional; unset limits fall back to the requests).
+
+api:
+  uvicornWorkers: 2
+  resources:
+    requests:
+      cpu: 1
+      memory: "2G"
+    limits:
+      enabled: true
+      memory: "4G"
+
+# alembic initContainer in the api pod
+migrate:
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+
+celery:
+  # Concurrent jobs on the CPU worker
+  concurrency: 4
+
+worker:
+  # cpu ≈ celery.concurrency × MMSEQS_THREADS; memory must hold the largest
+  # nucleotide index (memory-mapped).
+  resources:
+    requests:
+      cpu: 4
+      memory: "64G"
+    limits:
+      enabled: true
+      memory: "128G"
+
+gpuWorker:
+  # Also sets MMSEQS_GPU_ENABLED: when false the API routes everything to the
+  # CPU worker.
+  enabled: true
+  # MMSEQS_THREADS for GPU searches
+  threads: 8
+  # nvidia.com/gpu: 1 is added to limits by the template.
+  resources:
+    requests:
+      cpu: 8
+      memory: "64G"
+    limits:
+      enabled: true
+      memory: "128G"
+
+beat:
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      enabled: true
+      memory: "512Mi"
+
+postgres:
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  user: apiblast
+  database: apiblast
+  # Empty uses defaultSecurityContext. To run as the alpine image's postgres user:
+  #   securityContext:
+  #     runAsUser: 70
+  #     runAsGroup: 70
+  #     fsGroup: 70
+  #     runAsNonRoot: true
+  securityContext: {}
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1G"
+    limits:
+      enabled: true
+      memory: "2G"
+
+redis:
+  image:
+    repository: redis
+    tag: 7.4-alpine
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: "250m"
+      memory: "512Mi"
+    limits:
+      enabled: true
+      memory: "1G"
