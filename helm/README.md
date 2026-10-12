@@ -136,7 +136,10 @@ Inside the namespace, `http://apiblast-api:8000` also works.
 Deployment and the `MMSEQS_GPU_ENABLED` setting, so the API only routes
 blastp/blastx to the `blast_gpu` queue while the GPU worker exists. The GPU
 worker holds the A100 permanently and runs one job at a time.
-`gpuWorker.threads` sets its `MMSEQS_THREADS`.
+`gpuWorker.threads` sets its `MMSEQS_THREADS`. The pod runs with `runtimeClassName:
+nvidia` (`gpuWorker.runtimeClassName`; set it to `""` where `nvidia` is the
+default runtime); without the NVIDIA runtime the GPU is allocated but no
+`/dev/nvidia*` devices appear in the container.
 
 ## Degraded mode (the GPU or its node is unavailable)
 

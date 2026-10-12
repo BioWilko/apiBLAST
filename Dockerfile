@@ -33,4 +33,6 @@ RUN useradd -m apiblast && \
 USER apiblast
 
 ENV MMSEQS_BIN=/usr/local/bin/mmseqs \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    NVIDIA_VISIBLE_DEVICES=all \
+    NVIDIA_DRIVER_CAPABILITIES=compute,utility

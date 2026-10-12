@@ -27,9 +27,9 @@ volumes:
     claimName: cephfs-shared-team
     # Folders inside cephfs-shared-team, mounted via subPath.
     subPaths:
-      db: apiblast/db              # MMseqs2 databases, mounted read-only
+      db: apiblast/db # MMseqs2 databases, mounted read-only
       results: apiblast/results
-      postgres: apiblast/postgres  # PGDATA is a subdirectory of this
+      postgres: apiblast/postgres # PGDATA is a subdirectory of this
       redis: apiblast/redis
   # Root initContainer that creates the results/postgres/redis folders and
   # chowns them to the pod's uid:gid. Missing subPaths would otherwise be
@@ -109,11 +109,11 @@ worker:
   # nucleotide index (memory-mapped).
   resources:
     requests:
-      cpu: 4
-      memory: "64G"
+      cpu: 8
+      memory: "128G"
     limits:
       enabled: true
-      memory: "128G"
+      memory: "256G"
 
 gpuWorker:
   # Also sets MMSEQS_GPU_ENABLED: when false the API routes everything to the
@@ -121,14 +121,18 @@ gpuWorker:
   enabled: true
   # MMSEQS_THREADS for GPU searches
   threads: 8
+  # RuntimeClass that injects the GPU into the container (the GPU operator's
+  # default is "nvidia"). Empty omits it, for clusters where nvidia is the
+  # default runtime.
+  runtimeClassName: nvidia
   # nvidia.com/gpu: 1 is added to limits by the template.
   resources:
     requests:
       cpu: 8
-      memory: "64G"
+      memory: "128G"
     limits:
       enabled: true
-      memory: "128G"
+      memory: "256G"
 
 beat:
   resources:

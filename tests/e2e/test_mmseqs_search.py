@@ -1,8 +1,8 @@
 """End-to-end searches against real MMseqs2 test databases.
 
 Skipped unless `mmseqs` is on PATH. The databases are built from
-tests/e2e/data/ with scripts/seed_test_db.sh. The GPU test additionally needs
-a working `nvidia-smi` and APIBLAST_GPU_TESTS=1.
+tests/e2e/data/ with scripts/seed_test_db.sh. The GPU test runs only with
+APIBLAST_GPU_TESTS=1, and then fails (rather than skips) if the GPU search fails.
 """
 import json
 import os
@@ -23,10 +23,6 @@ DATA = Path(__file__).parent / "data"
 pytestmark = pytest.mark.skipif(MMSEQS is None, reason="mmseqs not installed")
 
 
-def _gpu_available() -> bool:
-    if os.environ.get("APIBLAST_GPU_TESTS") != "1" or not shutil.which("nvidia-smi"):
-        return False
-    return subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0
 
 
 def _read_fasta(path: Path) -> dict[str, str]:
@@ -127,7 +123,8 @@ def test_blastx_orf_mode_override(db_root, tmp_path):
     assert hits[0]["q_start"] < hits[0]["q_end"]
 
 
-@pytest.mark.skipif(not _gpu_available(), reason="needs a GPU and APIBLAST_GPU_TESTS=1")
+@pytest.mark.skipif(os.environ.get("APIBLAST_GPU_TESTS") != "1",
+                    reason="GPU test: set APIBLAST_GPU_TESTS=1 on a machine with a GPU")
 def test_blastp_gpu_self_hit(db_root, tmp_path):
     hits = _search(db_root, tmp_path, "blastp", "prot_small", f">q\n{PROT['prot_c']}\n",
                    use_gpu=True)

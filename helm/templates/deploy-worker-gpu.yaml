@@ -24,6 +24,9 @@ spec:
         app: apiblast-worker-gpu
     spec:
       {{- include "apiblast.securityContext" $sc | nindent 6 }}
+      {{- with .Values.gpuWorker.runtimeClassName }}
+      runtimeClassName: {{ . }}
+      {{- end }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       terminationGracePeriodSeconds: 60
