@@ -31,7 +31,7 @@ spec:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       terminationGracePeriodSeconds: 60
       volumes:
-        {{- include "apiblast.appVolumes" . | nindent 8 }}
+        {{- include "apiblast.volumes" . | nindent 8 }}
       {{- if .Values.volumes.initDirs.enabled }}
       initContainers:
         {{- include "apiblast.initDirsContainer" (dict "root" $ "subPaths" (list .Values.volumes.sharedTeam.subPaths.results) "owner" (printf "%v:%v" $sc.runAsUser $sc.runAsGroup)) | nindent 8 }}
@@ -40,12 +40,7 @@ spec:
         - name: worker-gpu
           {{- include "apiblast.image" . | nindent 10 }}
           {{- include "apiblast.resources" (merge (dict "gpu" 1) (deepCopy .Values.gpuWorker.resources)) | nindent 10 }}
-          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
-          env:
-            - name: MMSEQS_THREADS
-              value: {{ .Values.gpuWorker.threads | toString | quote }}
-            - name: CELERY_CONCURRENCY
-              value: "1"
+          {{- include "apiblast.env" (dict "root" $ "overrides" (dict "MMSEQS_THREADS" .Values.gpuWorker.threads "CELERY_CONCURRENCY" 1)) | nindent 10 }}
           command:
             - celery
             - -A

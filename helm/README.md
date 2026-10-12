@@ -16,11 +16,11 @@ come from a gitignored `values-secrets.yaml`.
 | Deployment `apiblast-beat`                 | Celery beat (hourly `expire_results`)                                       |
 | StatefulSet + Service `apiblast-postgres`  | `postgres:16-alpine`, data in `apiblast/postgres`                           |
 | Deployment + Service `apiblast-redis`      | `redis:7.4-alpine --save 60 1`, data in `apiblast/redis`                    |
-| ConfigMap `apiblast-config`                | App settings (replaces `.env`) and `databases.yml`                          |
 | Secret `apiblast-credentials`              | `SECRET_KEY`, `POSTGRES_PASSWORD`, `DATABASE_URL`                           |
 
-All Deployments use `strategy: Recreate`. There is no Ingress: the API is
-reachable only from inside the cluster.
+App settings (`config`, `databases`) are set as inline container env vars;
+the chart creates no ConfigMap. All Deployments use `strategy: Recreate`.
+There is no Ingress: the API is reachable only from inside the cluster.
 
 Folders used on `cephfs-shared-team`:
 
@@ -55,8 +55,8 @@ in doesn't leave uncommitted changes:
 cp helm/values-databases.yaml.example values-databases.yaml   # then edit
 ```
 
-`databases` is rendered to `/etc/apiblast/databases.yml`
-(`DB_CONFIG`). Each entry needs `name` and `type`
+`databases` is rendered as JSON into the `DATABASES` env var of every app
+container. Each entry needs `name` and `type`
 (`nucleotide` | `protein`); `description` is optional. `path` is the
 directory holding the DB and defaults to `/data/db/<name>`, so the app
 searches `/data/db/<name>/<name>`:
@@ -72,8 +72,8 @@ databases:
 ```
 
 Nucleotide DBs serve `blastn`; protein DBs serve `blastp` and `blastx`.
-Changing `databases` changes the ConfigMap checksum, so `helm upgrade` rolls
-the api and worker pods.
+Changing `databases` changes the pod spec, so `helm upgrade` rolls the app
+pods.
 
 ## Credentials
 

@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -23,6 +24,9 @@ class Settings(BaseSettings):
     MMSEQS_BIN: Path = Path("/usr/local/bin/mmseqs")
     RESULT_DIR: Path = Path("/data/results")
     DB_CONFIG: Path = Path("databases.yml")
+    # JSON list of database entries (as under `databases:` in DB_CONFIG). When
+    # set, used instead of DB_CONFIG. Set by the Helm chart.
+    DATABASES: list[dict[str, Any]] | None = None
 
     # MMseqs2 execution
     MMSEQS_THREADS: int = 1

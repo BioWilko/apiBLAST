@@ -43,8 +43,8 @@ credentials:
   postgresPassword: ""
   databaseUrl: ""
 
-# ── Application settings (rendered into the apiblast-config ConfigMap) ───────
-# REDIS_URL, RESULT_DIR, DB_CONFIG, CELERY_CONCURRENCY and
+# ── Application settings (set as env vars on every app container) ───────────
+# REDIS_URL, RESULT_DIR, DB_CONFIG, DATABASES, CELERY_CONCURRENCY and
 # MMSEQS_GPU_ENABLED are set by the chart and cannot be set here.
 config:
   APP_ENV: production
@@ -68,7 +68,7 @@ config:
   RATE_LIMIT_SUBMIT_PER_HOUR: 100
 
 # Supplied via the gitignored values-databases.yaml (see
-# values-databases.yaml.example). Rendered to /etc/apiblast/databases.yml.
+# values-databases.yaml.example). Rendered as JSON into the DATABASES env var.
 databases: []
 
 # ── Components ────────────────────────────────────────────────────────────────

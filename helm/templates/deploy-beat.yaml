@@ -32,7 +32,7 @@ spec:
         - name: beat
           {{- include "apiblast.image" . | nindent 10 }}
           {{- include "apiblast.resources" .Values.beat.resources | nindent 10 }}
-          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          {{- include "apiblast.env" (dict "root" $) | nindent 10 }}
           command:
             - celery
             - -A

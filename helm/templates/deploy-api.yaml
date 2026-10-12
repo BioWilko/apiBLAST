@@ -27,7 +27,7 @@ spec:
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       volumes:
-        {{- include "apiblast.appVolumes" . | nindent 8 }}
+        {{- include "apiblast.volumes" . | nindent 8 }}
       initContainers:
         {{- if .Values.volumes.initDirs.enabled }}
         {{- include "apiblast.initDirsContainer" (dict "root" $ "subPaths" (list .Values.volumes.sharedTeam.subPaths.results) "owner" (printf "%v:%v" $sc.runAsUser $sc.runAsGroup)) | nindent 8 }}
@@ -36,7 +36,7 @@ spec:
         - name: migrate
           {{- include "apiblast.image" . | nindent 10 }}
           {{- include "apiblast.resources" .Values.migrate.resources | nindent 10 }}
-          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          {{- include "apiblast.env" (dict "root" $) | nindent 10 }}
           command:
             - /bin/sh
             - -c
@@ -50,7 +50,7 @@ spec:
         - name: api
           {{- include "apiblast.image" . | nindent 10 }}
           {{- include "apiblast.resources" .Values.api.resources | nindent 10 }}
-          {{- include "apiblast.commonEnvFrom" . | nindent 10 }}
+          {{- include "apiblast.env" (dict "root" $) | nindent 10 }}
           command:
             - uvicorn
             - app.main:app

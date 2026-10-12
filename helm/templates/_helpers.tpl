@@ -31,21 +31,7 @@ Shared-team PVC volume.
 {{- end }}
 
 {{/*
-App pod volumes: shared-team plus the databases.yml ConfigMap key.
-*/}}
-{{- define "apiblast.appVolumes" -}}
-{{ include "apiblast.volumes" . }}
-- name: apiblast-config
-  configMap:
-    name: apiblast-config
-    items:
-      - key: databases.yml
-        path: databases.yml
-{{- end }}
-
-{{/*
-Volume mounts for app containers: MMseqs2 DBs read-only, results RW, and
-databases.yml at /etc/apiblast/databases.yml (DB_CONFIG).
+Volume mounts for app containers: MMseqs2 DBs read-only, results RW.
 */}}
 {{- define "apiblast.appVolumeMounts" -}}
 - name: shared-team
@@ -55,28 +41,57 @@ databases.yml at /etc/apiblast/databases.yml (DB_CONFIG).
 - name: shared-team
   mountPath: /data/results
   subPath: {{ .Values.volumes.sharedTeam.subPaths.results }}
-- name: apiblast-config
-  mountPath: /etc/apiblast
-  readOnly: true
 {{- end }}
 
 {{/*
-App container env from the ConfigMap and Secret. Entries in a container's
-`env:` take precedence over these.
+App container environment, set inline rather than from a ConfigMap: the
+chart-set keys, values.config, and values.databases as JSON in DATABASES;
+credentials come from the Secret.
+Pass a dict: root (the chart context), overrides (optional dict of
+per-container values, which win over everything else).
+Usage: include "apiblast.env" (dict "root" $) | nindent 10
 */}}
-{{- define "apiblast.commonEnvFrom" -}}
+{{- define "apiblast.env" -}}
+{{- $values := .root.Values -}}
+{{- $reserved := list "REDIS_URL" "RESULT_DIR" "DB_CONFIG" "DATABASES" "CELERY_CONCURRENCY" "MMSEQS_GPU_ENABLED" -}}
+{{- range $k, $_ := $values.config }}
+{{- if has $k $reserved }}
+{{- fail (printf "config.%s is set by the chart and must not be overridden in values.config" $k) }}
+{{- end }}
+{{- end }}
+{{- $dbs := list }}
+{{- range $values.databases }}
+{{- $name := required "databases[].name is required" .name }}
+{{- $type := required (printf "databases[%s].type is required (nucleotide|protein)" $name) .type }}
+{{- if not (has $type (list "nucleotide" "protein")) }}
+{{- fail (printf "databases[%s].type must be nucleotide or protein, got %q" $name $type) }}
+{{- end }}
+{{- $dbs = append $dbs (merge (deepCopy .) (dict "path" (printf "/data/db/%s" $name) "description" "")) }}
+{{- end }}
+{{- $chartSet := dict
+  "REDIS_URL" "redis://apiblast-redis:6379/0"
+  "RESULT_DIR" "/data/results"
+  "CELERY_CONCURRENCY" $values.celery.concurrency
+  "MMSEQS_GPU_ENABLED" $values.gpuWorker.enabled
+  "DATABASES" (toJson $dbs)
+-}}
+{{- /* merge keeps the first dict's keys: overrides > chart-set > values.config */ -}}
+{{- $env := merge (deepCopy (.overrides | default dict)) $chartSet (deepCopy $values.config) -}}
+env:
+{{- range $k, $v := $env }}
+  - name: {{ $k }}
+    value: {{ $v | toString | quote }}
+{{- end }}
 envFrom:
-  - configMapRef:
-      name: apiblast-config
   - secretRef:
       name: apiblast-credentials
 {{- end }}
 
 {{/*
-Restart app pods when config or credentials change.
+Restart app pods when credentials change. Other settings are inline env, so
+changing them changes the pod spec directly.
 */}}
 {{- define "apiblast.checksumAnnotations" -}}
-checksum/config: {{ include (print .Template.BasePath "/configmap.yaml") . | sha256sum }}
 checksum/secret: {{ include (print .Template.BasePath "/secret.yaml") . | sha256sum }}
 {{- end }}
 

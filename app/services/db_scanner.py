@@ -1,4 +1,4 @@
-"""Load MMseqs2 database definitions from databases.yml."""
+"""Load MMseqs2 database definitions from the DATABASES setting or databases.yml."""
 import logging
 from datetime import datetime
 from pathlib import Path
@@ -40,10 +40,13 @@ def _disk_stats(db_dir: Path, db_name: str) -> tuple[int, datetime | None]:
     return size, last_updated
 
 
-def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
-    """Return database definitions from the YAML config file."""
+def _read_entries(config_path: Path | None) -> list[dict]:
+    """Return raw database entries from config_path, else DATABASES, else DB_CONFIG."""
     if config_path is None:
-        config_path = get_settings().DB_CONFIG
+        settings = get_settings()
+        if settings.DATABASES is not None:
+            return settings.DATABASES
+        config_path = settings.DB_CONFIG
 
     if not config_path.is_file():
         return []
@@ -53,9 +56,18 @@ def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
 
     if not data or "databases" not in data:
         return []
+    return data["databases"]
 
+
+def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
+    """Return database definitions.
+
+    Args:
+        config_path: YAML file to read. When omitted, the DATABASES setting is
+            used if set, otherwise the DB_CONFIG file.
+    """
     results: list[DatabaseInfo] = []
-    for entry in data["databases"]:
+    for entry in _read_entries(config_path):
         db_type = str(entry.get("type", "nucleotide")).lower()
         program_types = _NT_PROGRAMS if db_type == "nucleotide" else _AA_PROGRAMS
 

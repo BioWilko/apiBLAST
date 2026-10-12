@@ -3,6 +3,8 @@ import logging
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from app.services import db_scanner
 from app.services.db_scanner import database_exists, get_database, load_databases
 
@@ -244,3 +246,63 @@ def test_get_database_returns_definition(tmp_path):
     assert db is not None
     assert db.program_types == ["blastp", "blastx"]
     assert get_database("other", cfg) is None
+
+
+# ── DATABASES setting ──────────────────────────────────────────────────────────
+
+@pytest.fixture
+def settings_env(monkeypatch):
+    """Set env vars and return fresh Settings, restoring the cached ones afterwards."""
+    from app.config import Settings
+
+    def apply(**env):
+        for k, v in env.items():
+            monkeypatch.setenv(k, v)
+        settings = Settings()
+        monkeypatch.setattr(db_scanner, "get_settings", lambda: settings)
+        return settings
+
+    return apply
+
+
+def test_databases_setting_parsed_from_json_env(settings_env):
+    settings = settings_env(DATABASES='[{"name": "x", "type": "protein", "path": "/tmp"}]')
+    assert settings.DATABASES == [{"name": "x", "type": "protein", "path": "/tmp"}]
+
+
+def test_databases_setting_takes_precedence_over_file(tmp_path, settings_env):
+    cfg = _write_config(tmp_path, """\
+        databases:
+          - name: from_file
+            path: /tmp
+            type: nucleotide
+    """)
+    settings_env(
+        DB_CONFIG=str(cfg),
+        DATABASES='[{"name": "from_env", "type": "protein", "path": "/tmp"}]',
+    )
+    dbs = load_databases()
+    assert [d.name for d in dbs] == ["from_env"]
+    assert dbs[0].program_types == ["blastp", "blastx"]
+
+
+def test_empty_databases_setting_does_not_fall_back_to_file(tmp_path, settings_env):
+    cfg = _write_config(tmp_path, """\
+        databases:
+          - name: from_file
+            path: /tmp
+            type: nucleotide
+    """)
+    settings_env(DB_CONFIG=str(cfg), DATABASES="[]")
+    assert load_databases() == []
+
+
+def test_explicit_path_overrides_databases_setting(tmp_path, settings_env):
+    cfg = _write_config(tmp_path, """\
+        databases:
+          - name: from_file
+            path: /tmp
+            type: nucleotide
+    """)
+    settings_env(DATABASES='[{"name": "from_env", "type": "protein", "path": "/tmp"}]')
+    assert [d.name for d in load_databases(cfg)] == ["from_file"]
