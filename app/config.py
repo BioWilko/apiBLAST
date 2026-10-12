@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     MAX_CONCURRENT_DBS: int = 3
     MEMORY_FLOOR_MB: int = 512
 
+    # Prioritisation: CPU jobs whose estimated cost (app.services.cost) reaches
+    # this threshold are queued behind normal jobs
+    COST_HEAVY_THRESHOLD: float = 1000.0
+
     # Result retention
     RESULT_TTL_S: int = 86_400
 

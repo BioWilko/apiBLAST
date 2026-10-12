@@ -173,15 +173,72 @@ Per-IP limits enforced via SlowAPI (Redis-backed):
 
 | Limit | Value |
 |---|---|
-| Submissions per minute | 10 |
-| Submissions per hour | 100 |
-| Global queue depth | `CELERY_CONCURRENCY × 4` |
+| Submissions per minute | `RATE_LIMIT_SUBMIT_PER_MINUTE` (10) |
+| Submissions per hour | `RATE_LIMIT_SUBMIT_PER_HOUR` (100) |
+| Other requests per minute | 200 |
+| Global queue depth | `MAX_QUEUE_DEPTH` (16) pending + running jobs |
 | Max query length (nt, `blastn`/`blastx`) | 500,000 bp |
 | Max query length (aa, `blastp`) | 100,000 residues |
 | Max sequences per job | 100 |
 
 `429` responses include a `Retry-After: 60` header.
 `503` is returned when the server queue is full.
+
+Holders of a [priority token](#priority-tokens) are exempt from the request
+limits and the queue depth, but not from the query size limits.
+
+---
+
+## Prioritisation
+
+Each CPU search gets a cost estimate at submission, roughly
+
+```
+cost = program factor × query kilo-residues × database GB × (s / 5.7)² × max(max_hits, 300) / 300
+```
+
+where the program factor is 2 for `blastn` (both strands) and `blastx` (six
+frames) and 1 for `blastp`, and the database size is its on-disk size
+(including any `.idx`, with a 0.1 GB floor). Jobs with
+`cost ≥ COST_HEAVY_THRESHOLD` (default 1000) are queued behind all other
+jobs; they still run in submission order among themselves, and only wait
+while lighter jobs are queued. Examples at the default threshold:
+
+| Search | Cost | Heavy? |
+|---|---|---|
+| `blastn`, one 30 kb genome vs a 5 GB database | 300 | no |
+| `blastn`, 100 × 1.5 kb 16S reads vs a 5 GB database | 1,500 | yes |
+| `blastp`, 100 × 400 aa proteins vs a 1 GB database | 40 | no |
+| `blastp`, 100 × 400 aa proteins vs a 100 GB database | 4,000 | yes |
+
+GPU searches are never deprioritised. Each submission logs its cost, so the
+threshold can be tuned against the jobs' measured run times.
+
+---
+
+## Priority tokens
+
+Priority tokens are optional; requests without one behave as above. A token
+is sent as a bearer token:
+
+```bash
+curl -H "Authorization: Bearer apb_..." -X POST .../api/v1/jobs -d @job.json
+```
+
+Its holder bypasses rate limits, the queue depth limit and deprioritisation:
+their jobs go to the front of the queue. A request with an unknown or revoked
+token gets `401`.
+
+Tokens are created, listed and revoked on the server, where only a hash of
+each token is stored. The token itself is printed once, at creation:
+
+```bash
+python -m app.admin tokens create --label "alice (outbreak team)"
+python -m app.admin tokens list
+python -m app.admin tokens revoke <id-or-prefix>
+```
+
+Revoking a token takes effect immediately.
 
 ---
 
@@ -229,6 +286,9 @@ All settings are environment variables (`.env` file or system env):
 | `JOB_SOFT_TIMEOUT_S` | `3600` | SIGTERM after this many seconds |
 | `JOB_HARD_TIMEOUT_S` | `3900` | SIGKILL (must be > soft) |
 | `MAX_QUEUE_DEPTH` | `16` | Max pending + running jobs before `503` |
+| `COST_HEAVY_THRESHOLD` | `1000` | Estimated cost at which CPU jobs are deprioritised (see [Prioritisation](#prioritisation)) |
+| `RATE_LIMIT_SUBMIT_PER_MINUTE` | `10` | Per-IP job submissions per minute |
+| `RATE_LIMIT_SUBMIT_PER_HOUR` | `100` | Per-IP job submissions per hour |
 | `MAX_CONCURRENT_DBS` | `3` | Max distinct databases active at once |
 | `MEMORY_FLOOR_MB` | `512` | Minimum free RAM to accept a job |
 | `RESULT_TTL_S` | `86400` | Result file retention (default 24 h) |

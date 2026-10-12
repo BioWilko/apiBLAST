@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,7 +33,8 @@ _TERMINAL_STATES = {"SUCCESS", "FAILURE", "TIMEOUT", "REVOKED"}
 
 
 def _make_client() -> CliClient:
-    return CliClient(_config.get_server_url())
+    # APIBLAST_TOKEN: optional priority token (bypasses rate limits and deprioritisation)
+    return CliClient(_config.get_server_url(), token=os.environ.get("APIBLAST_TOKEN"))
 
 
 def _handle_cli_error(e: CliError) -> None:

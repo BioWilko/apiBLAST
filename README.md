@@ -131,6 +131,8 @@ apiblast config show                                     # print current config
 
 Local job history is stored in `~/.config/apiblast/history.json`.
 
+If you have been given a priority token, set `APIBLAST_TOKEN` to send it with every request.
+
 ---
 
 ## Output formats

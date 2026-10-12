@@ -19,6 +19,9 @@ def _make_celery() -> Celery:
             # Redis re-delivers a task if the worker hasn't acked within this window.
             "broker_transport_options": {
                 "visibility_timeout": 86_400,  # 24 hours
+                # Message priority buckets; lower is consumed first. The API
+                # submits jobs at 0 (priority token), 3 (normal) or 9 (heavy).
+                "priority_steps": [0, 3, 6, 9],
             },
             # Never prefetch more than 1 task — prevents a fast worker from hoarding
             # while a slow one is starved.

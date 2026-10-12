@@ -48,3 +48,22 @@ class Job(Base):
 
     def extra_args(self) -> dict:
         return json.loads(self.extra_args_json) if self.extra_args_json else {}
+
+
+class PriorityToken(Base):
+    """A token that exempts its holder from rate limits and deprioritisation.
+
+    Only the SHA-256 hash of the token is stored; see app.services.tokens.
+    """
+
+    __tablename__ = "priority_tokens"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    label: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Leading characters of the raw token, to identify it in listings
+    prefix: Mapped[str] = mapped_column(String(16), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

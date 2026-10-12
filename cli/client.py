@@ -14,8 +14,8 @@ class CliError(Exception):
 class CliClient:
     """Wraps BLASTClient and converts ApiBlastError → CliError."""
 
-    def __init__(self, base_url: str, timeout: float = 30.0):
-        self._client = BLASTClient(server=base_url, timeout=timeout)
+    def __init__(self, base_url: str, timeout: float = 30.0, token: str | None = None):
+        self._client = BLASTClient(server=base_url, timeout=timeout, token=token)
 
     def _call(self, fn, *args, **kwargs):
         try:

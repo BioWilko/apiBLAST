@@ -92,6 +92,22 @@ time Postgres starts on an empty `apiblast/postgres` folder. Changing
 `ALTER USER apiblast PASSWORD '...'` in the Postgres pod (and update
 `databaseUrl` to match), or start again from an empty `apiblast/postgres`.
 
+## Priority tokens
+
+Priority tokens let selected users bypass rate limits and deprioritisation
+(see `docs/server.md`). They are stored, hashed, in Postgres, so creating or
+revoking one needs no `helm upgrade`:
+
+```bash
+kubectl exec deploy/apiblast-api -- python -m app.admin tokens create --label "alice (outbreak team)"
+kubectl exec deploy/apiblast-api -- python -m app.admin tokens list
+kubectl exec deploy/apiblast-api -- python -m app.admin tokens revoke <id-or-prefix>
+```
+
+The token is printed once. Clients send it as `Authorization: Bearer <token>`
+(or set `APIBLAST_TOKEN` for the Python client and CLI). Access is plain HTTP
+in-cluster, so treat tokens as trusted-network credentials.
+
 ## Install
 
 ```bash

@@ -60,6 +60,9 @@ config:
   MAX_QUEUE_DEPTH: 16
   MAX_CONCURRENT_DBS: 3
   MEMORY_FLOOR_MB: 512
+  # CPU jobs with an estimated cost at or above this are queued behind
+  # everything else (see docs/server.md#prioritisation)
+  COST_HEAVY_THRESHOLD: 1000
   RESULT_TTL_S: 86400
   RATE_LIMIT_SUBMIT_PER_MINUTE: 10
   RATE_LIMIT_SUBMIT_PER_HOUR: 100

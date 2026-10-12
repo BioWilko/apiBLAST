@@ -43,6 +43,8 @@ class BLASTClient:
     Args:
         server: Base URL of the apiBLAST server (no trailing slash).
         timeout: HTTP request timeout in seconds applied to every request.
+        token: Optional priority token. Its holder bypasses rate limits and
+            deprioritisation of heavy searches. Most users do not need one.
 
     Example:
         >>> from apiblast import BLASTClient
@@ -52,9 +54,12 @@ class BLASTClient:
         ...         print(hit.subject_id, hit.evalue)
     """
 
-    def __init__(self, server: str = _DEFAULT_SERVER, timeout: float = 30.0):
+    def __init__(
+        self, server: str = _DEFAULT_SERVER, timeout: float = 30.0, token: str | None = None
+    ):
         self._base = server.rstrip("/")
         self._timeout = timeout
+        self._headers = {"Authorization": f"Bearer {token}"} if token else {}
         self._http: httpx.Client | None = None
 
     @classmethod
@@ -62,6 +67,7 @@ class BLASTClient:
         """Create a client from the ``APIBLAST_SERVER`` environment variable.
 
         Falls back to ``http://localhost:8000`` if the variable is not set.
+        A priority token is read from ``APIBLAST_TOKEN`` if set.
 
         Args:
             timeout: HTTP request timeout in seconds.
@@ -76,12 +82,14 @@ class BLASTClient:
             >>> client = BLASTClient.from_env()
         """
         server = os.environ.get("APIBLAST_SERVER", _DEFAULT_SERVER)
-        return cls(server=server, timeout=timeout)
+        return cls(server=server, timeout=timeout, token=os.environ.get("APIBLAST_TOKEN"))
 
     # ── Context manager ───────────────────────────────────────────────────────
 
     def __enter__(self) -> "BLASTClient":
-        self._http = httpx.Client(base_url=self._base, timeout=self._timeout)
+        self._http = httpx.Client(
+            base_url=self._base, timeout=self._timeout, headers=self._headers
+        )
         return self
 
     def __exit__(self, *_) -> None:
@@ -93,7 +101,9 @@ class BLASTClient:
         if self._http:
             resp = getattr(self._http, method)(path, **kwargs)
         else:
-            with httpx.Client(base_url=self._base, timeout=self._timeout) as c:
+            with httpx.Client(
+                base_url=self._base, timeout=self._timeout, headers=self._headers
+            ) as c:
                 resp = getattr(c, method)(path, **kwargs)
         _raise_for_status(resp)
         return resp

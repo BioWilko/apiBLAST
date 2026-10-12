@@ -23,10 +23,14 @@ for hit in result.hits:
 ## BLASTClient
 
 ```python
-BLASTClient(server="http://localhost:8000", timeout=30.0)
+BLASTClient(server="http://localhost:8000", timeout=30.0, token=None)
 ```
 
-Can also be constructed from the `APIBLAST_SERVER` environment variable:
+`token` is an optional priority token, which exempts your jobs from rate
+limits and from deprioritisation. Most users do not need one.
+
+Can also be constructed from the `APIBLAST_SERVER` (and optional
+`APIBLAST_TOKEN`) environment variables:
 
 ```python
 client = BLASTClient.from_env()

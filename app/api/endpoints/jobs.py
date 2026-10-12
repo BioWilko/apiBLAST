@@ -1,4 +1,5 @@
 import json
+import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -6,6 +7,7 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.core.auth import priority_token
 from app.core.limiter import limiter
 from app.deps import get_db
 from app.models.db import Job
@@ -18,9 +20,18 @@ from app.models.schemas import (
     JobSubmitted,
 )
 from app.services import result_store
+from app.services.cost import estimate_cost, is_heavy
 from app.services.db_scanner import get_database
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["jobs"])
+
+# Celery message priorities. On the Redis broker lower values are consumed
+# first; these sit on kombu's default priority_steps (0, 3, 6, 9).
+_PRIORITY_TOKEN = 0
+_PRIORITY_NORMAL = 3
+_PRIORITY_HEAVY = 9
 
 
 def _queue_pos(db: Session) -> int:
@@ -46,23 +57,24 @@ def _elapsed(job: Job) -> float | None:
 
 
 @router.post("/jobs", response_model=JobSubmitted, status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
-@limiter.limit("100/hour")
+@limiter.limit(lambda: f"{get_settings().RATE_LIMIT_SUBMIT_PER_MINUTE}/minute")
+@limiter.limit(lambda: f"{get_settings().RATE_LIMIT_SUBMIT_PER_HOUR}/hour")
 def submit_job(
     request: Request,
     job_in: JobCreate,
     db: Session = Depends(get_db),
 ) -> JobSubmitted:
     settings = get_settings()
+    token = priority_token(request)
 
-    # Global queue-depth guard
+    # Global queue-depth guard (priority tokens bypass it)
     active = (
         db.query(func.count(Job.id))
         .filter(Job.status.in_(["PENDING", "RUNNING"]))
         .scalar()
         or 0
     )
-    if active >= settings.MAX_QUEUE_DEPTH:
+    if token is None and active >= settings.MAX_QUEUE_DEPTH:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Server at capacity ({active} active jobs). Retry later.",
@@ -118,6 +130,25 @@ def submit_job(
 
     db.commit()
 
+    # Heavy CPU searches queue behind everything else. GPU searches are fast
+    # enough that they are never deprioritised.
+    cost = None
+    if token is not None:
+        priority = _PRIORITY_TOKEN
+    elif use_gpu:
+        priority = _PRIORITY_NORMAL
+    else:
+        cost = estimate_cost(
+            job_in.program, total_length, database.size_bytes, job_in.max_hits, job_in.extra_args
+        )
+        priority = _PRIORITY_HEAVY if is_heavy(cost) else _PRIORITY_NORMAL
+    logger.info(
+        "Submitted job %s: program=%s database=%s query_length=%d use_gpu=%s "
+        "cost=%s priority=%d token=%s",
+        job.id, job.program, job.database, total_length, use_gpu,
+        f"{cost:.1f}" if cost is not None else "-", priority, token.label if token else "-",
+    )
+
     # Dispatch Celery task
     from app.tasks.blast import blast_run
     blast_run.apply_async(
@@ -125,6 +156,7 @@ def submit_job(
         kwargs={"use_gpu": use_gpu},
         task_id=None,
         queue="blast_gpu" if use_gpu else "blast",
+        priority=priority,
     )
 
     queue_pos = _queue_pos(db)

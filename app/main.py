@@ -7,6 +7,7 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from app.api.router import api_router, health_router
 from app.config import get_settings
+from app.core.auth import PriorityTokenMiddleware
 from app.core.exceptions import rate_limit_handler
 from app.core.limiter import limiter
 
@@ -32,6 +33,8 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_middleware(SlowAPIMiddleware)
     app.add_exception_handler(RateLimitExceeded, rate_limit_handler)
+    # Added last so it runs first: rate limiting needs to know about the token
+    app.add_middleware(PriorityTokenMiddleware)
 
     # Routers
     app.include_router(health_router)
