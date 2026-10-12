@@ -3,7 +3,9 @@ namespace: ns-cli-climb-gre-se
 image:
   repository: quay.io/climb-tre/apiblast
   tag: "2.0.0"
-  pullPolicy: IfNotPresent
+  # Always: a node re-checks the tag's digest on each pod start (cached layers
+  # are reused), so a re-pushed tag can't leave nodes on a stale image.
+  pullPolicy: Always
 
 # Image for the init-dirs initContainer (see volumes.initDirs).
 initImage:
