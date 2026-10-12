@@ -20,9 +20,9 @@ from app.main import create_app
 from app.models.schemas import DatabaseInfo
 from app.services import tokens
 
-QUERY = {"program": "blastn", "database": "testdb", "query": ">s\nACGTACGTACGT\n"}
+QUERY = {"query_type": "nucleotide", "database": "testdb", "query": ">s\nACGTACGTACGT\n"}
 _DB = DatabaseInfo(
-    name="testdb", description="", program_types=["blastn"],
+    name="testdb", description="", molecule_type="nucleotide",
     path="/data/db/testdb", size_bytes=0, last_updated=None,
 )
 

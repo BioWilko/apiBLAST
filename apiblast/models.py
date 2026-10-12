@@ -30,7 +30,7 @@ class BlastHit:
     Example:
         >>> from apiblast import BLASTClient
         >>> with BLASTClient("http://blast-server:8000") as client:
-        ...     result = client.blast("blastn", "nt_small", ">seq1\\nATGCATGC")
+        ...     result = client.blast("nucleotide", "nt_small", ">seq1\\nATGCATGC")
         ...     for hit in result.hits:
         ...         print(f"{hit.subject_id}: {hit.pct_identity:.1f}% identity, e={hit.evalue}")
     """
@@ -82,7 +82,7 @@ class BlastResult:
     Example:
         >>> from apiblast import BLASTClient
         >>> with BLASTClient("http://blast-server:8000") as client:
-        ...     result = client.blast("blastn", "nt_small", ">seq1\\nATGCATGC")
+        ...     result = client.blast("nucleotide", "nt_small", ">seq1\\nATGCATGC")
         ...     print(f"Found {result.num_hits} hits for job {result.job_id}")
         ...     if result.hits:
         ...         best = min(result.hits, key=lambda h: float(h.evalue))
@@ -115,7 +115,7 @@ class Job:
         id: Unique job identifier (UUID string).
         status: Current job status. One of ``PENDING``, ``STARTED``,
             ``SUCCESS``, ``FAILURE``, ``TIMEOUT``, or ``REVOKED``.
-        program: BLAST program used (e.g. ``"blastn"``).
+        query_type: Query molecule type, ``"nucleotide"`` or ``"protein"``.
         database: Name of the target database.
         submitted_at: ISO 8601 timestamp when the job was queued.
         started_at: ISO 8601 timestamp when execution began, or ``None`` if
@@ -131,7 +131,7 @@ class Job:
     Example:
         >>> from apiblast import BLASTClient
         >>> with BLASTClient("http://blast-server:8000") as client:
-        ...     job = client.submit("blastn", "nt_small", ">seq1\\nATGCATGC")
+        ...     job = client.submit("nucleotide", "nt_small", ">seq1\\nATGCATGC")
         ...     print(f"Job {job.id} queued with status {job.status}")
         ...     job = client.wait(job.id)
         ...     if job.elapsed_s is not None:
@@ -140,7 +140,7 @@ class Job:
 
     id: str
     status: str
-    program: str
+    query_type: str
     database: str
     submitted_at: str
     started_at: str | None
@@ -164,7 +164,7 @@ class Job:
         return cls(
             id=d["job_id"],
             status=d["status"],
-            program=d["program"],
+            query_type=d["query_type"],
             database=d["database"],
             submitted_at=d.get("submitted_at", ""),
             started_at=d.get("started_at"),
@@ -185,9 +185,7 @@ class Database:
     Attributes:
         name: Unique database identifier used when submitting jobs.
         description: Human-readable description of the database contents.
-        program_types: Programs compatible with this database:
-            ``["blastn"]`` for a nucleotide database, ``["blastp", "blastx"]``
-            for a protein database.
+        molecule_type: ``"nucleotide"`` or ``"protein"``.
         path: Absolute path to the database files on the server.
         size_bytes: Total size of the database files in bytes.
         last_updated: ISO 8601 timestamp of the last database update, or
@@ -198,32 +196,22 @@ class Database:
         >>> with BLASTClient("http://blast-server:8000") as client:
         ...     for db in client.databases():
         ...         size_gb = db.size_bytes / 1e9
-        ...         print(f"{db.name} ({db.type}, {size_gb:.1f} GB): {db.description}")
+        ...         print(f"{db.name} ({db.molecule_type}, {size_gb:.1f} GB): {db.description}")
     """
 
     name: str
     description: str
-    program_types: list[str]
+    molecule_type: str
     path: str
     size_bytes: int
     last_updated: str | None
-
-    @property
-    def type(self) -> str:
-        """Molecule type inferred from compatible programs.
-
-        Returns:
-            ``"nucleotide"`` if ``"blastn"`` is in :attr:`program_types`,
-            otherwise ``"protein"``.
-        """
-        return "nucleotide" if "blastn" in self.program_types else "protein"
 
     @classmethod
     def _from_dict(cls, d: dict) -> "Database":
         return cls(
             name=d["name"],
             description=d.get("description", ""),
-            program_types=d.get("program_types", []),
+            molecule_type=d["molecule_type"],
             path=d.get("path", ""),
             size_bytes=d.get("size_bytes", 0),
             last_updated=d.get("last_updated"),

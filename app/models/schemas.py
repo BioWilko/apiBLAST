@@ -11,13 +11,20 @@ _FASTA_HEADER_RE = re.compile(r"^>.*")
 _NT_CHARS = re.compile(r"^[ACGTURYSWKMBDHVNacgturyswkmbdhvn\s]+$")
 _AA_CHARS = re.compile(r"^[ACDEFGHIKLMNPQRSTVWYXacdefghiklmnpqrstvwyx*\s]+$")
 
+MoleculeType = Literal["nucleotide", "protein"]
+
+# Internal search programs, chosen from the query and database molecule types.
 PROGRAMS = ("blastn", "blastp", "blastx")
 # Routed to the blast_gpu queue when MMSEQS_GPU_ENABLED is set. MMseqs2 has no
 # GPU path for nucleotide searches.
 GPU_PROGRAMS = {"blastp", "blastx"}
-_NT_QUERY_PROGRAMS = {"blastn", "blastx"}
-# Would need the target DB translated
-_UNSUPPORTED_PROGRAMS = {"tblastn", "tblastx"}
+# (query, database) → program. Protein queries against a nucleotide database
+# are missing: they would need the target DB translated.
+_PROGRAM_FOR = {
+    ("nucleotide", "nucleotide"): "blastn",
+    ("protein", "protein"): "blastp",
+    ("nucleotide", "protein"): "blastx",
+}
 
 # MMseqs2 options accepted in extra_args; anything else is rejected.
 ALLOWED_ARGS = {"min-seq-id", "c", "cov-mode", "s", "translation-mode", "translation-table"}
@@ -57,7 +64,7 @@ def _parse_fasta(text: str) -> list[tuple[str, str]]:
 class JobCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    program: Literal["blastn", "blastp", "blastx"]
+    query_type: MoleculeType
     database: str = Field(min_length=1, max_length=128)
     query: str = Field(min_length=1)
     evalue: float = Field(default=1e-5, ge=0, le=10)
@@ -78,15 +85,6 @@ class JobCreate(BaseModel):
             del data[field]
         return data
 
-    @field_validator("program", mode="before")
-    @classmethod
-    def reject_unsupported_programs(cls, v):
-        if v in _UNSUPPORTED_PROGRAMS:
-            raise ValueError(
-                f"program {v!r} is not supported: it would require translating the target database"
-            )
-        return v
-
     @field_validator("query")
     @classmethod
     def validate_query_fasta(cls, v: str) -> str:
@@ -104,11 +102,11 @@ class JobCreate(BaseModel):
         return v
 
     @model_validator(mode="after")
-    def validate_length_for_program(self) -> "JobCreate":
+    def validate_query_length(self) -> "JobCreate":
         settings = get_settings()
         records = _parse_fasta(self.query)
         total = sum(len(seq) for _, seq in records)
-        if self.program in _NT_QUERY_PROGRAMS:
+        if self.query_type == "nucleotide":
             limit = settings.MAX_QUERY_LENGTH_NT
             label = "nucleotides"
         else:
@@ -139,13 +137,15 @@ class JobCreate(BaseModel):
             raise ValueError("extra_arg 'translation-table' is not a valid genetic code table")
         return normalised
 
-    @model_validator(mode="after")
-    def blastx_only_args(self) -> "JobCreate":
-        if self.program != "blastx":
-            misplaced = sorted(BLASTX_ARGS & self.extra_args.keys())
-            if misplaced:
-                raise ValueError(f"extra_args {misplaced} are only valid for blastx")
-        return self
+
+def resolve_program(query_type: str, db_type: str) -> str | None:
+    """Return the search program for a query against a database, or None if unsupported."""
+    return _PROGRAM_FOR.get((query_type, db_type))
+
+
+def query_type_of(program: str) -> MoleculeType:
+    """Return the query molecule type a program searches with."""
+    return "protein" if program == "blastp" else "nucleotide"
 
 
 def _is_number(val) -> bool:
@@ -176,7 +176,7 @@ class JobSubmitted(BaseModel):
 class JobStatus(BaseModel):
     job_id: str
     status: str
-    program: str
+    query_type: MoleculeType
     database: str
     submitted_at: datetime
     started_at: datetime | None
@@ -210,7 +210,7 @@ class BlastResultResponse(BaseModel):
 class DatabaseInfo(BaseModel):
     name: str
     description: str
-    program_types: list[str]
+    molecule_type: MoleculeType
     path: str
     size_bytes: int
     last_updated: datetime | None

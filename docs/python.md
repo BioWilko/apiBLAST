@@ -14,7 +14,7 @@ pip install "apiblast[python]"
 from apiblast import BLASTClient
 
 with BLASTClient("http://blast-server:8000") as client:
-    result = client.blast("blastn", "nt_small", ">seq1\nATGCATGCATGCATGC")
+    result = client.blast("nucleotide", "nt_small", ">seq1\nATGCATGCATGCATGC")
 
 for hit in result.hits:
     print(hit.subject_id, hit.pct_identity, hit.evalue)
@@ -43,7 +43,7 @@ Using `BLASTClient` as a context manager keeps a persistent HTTP connection open
 ```python
 with BLASTClient("http://blast-server:8000") as client:
     dbs = client.databases()
-    result = client.blast("blastp", "nr", query)
+    result = client.blast("protein", "nr", query)
 ```
 
 Without the context manager, each call opens and closes its own connection.
@@ -58,16 +58,16 @@ List databases available on the server.
 
 ```python
 for db in client.databases():
-    print(db.name, db.type, db.description)
+    print(db.name, db.molecule_type, db.description)
 ```
 
-### `client.blast(program, database, query, ...) → BlastResult`
+### `client.blast(query_type, database, query, ...) → BlastResult`
 
 Submit a job, wait for it to complete, and return parsed results. The simplest way to run a search.
 
 ```python
 result = client.blast(
-    program="blastn",
+    query_type="nucleotide",
     database="nt_small",
     query=">seq1\nATGCATGCATGCATGC",
     evalue=1e-10,
@@ -82,7 +82,7 @@ Optional arguments:
 |---|---|---|---|
 | `evalue` | `float` | `1e-5` | E-value threshold |
 | `max_hits` | `int` | `50` | Maximum subjects to return per query |
-| `extra_args` | `dict` | `{}` | Additional MMseqs2 options, e.g. `{"min-seq-id": 0.9}` or, for blastx, `{"translation-table": 11}`. Only server-allowed options are accepted (see [server docs](server.md#extra_args)) |
+| `extra_args` | `dict` | `{}` | Additional MMseqs2 options, e.g. `{"min-seq-id": 0.9}` or, for translated searches, `{"translation-table": 11}`. Only server-allowed options are accepted (see [server docs](server.md#extra_args)) |
 | `poll_interval` | `float` | `2.0` | Initial polling interval (seconds) |
 | `timeout` | `float \| None` | `None` | Raise `WaitTimeoutError` after this many seconds |
 | `on_poll` | `Callable[[Job], None] \| None` | `None` | Callback invoked after each status poll |
@@ -94,23 +94,26 @@ def log_progress(job):
     elapsed = job.elapsed_s or 0
     print(f"  {job.status} ({elapsed:.0f}s elapsed)", end="\r")
 
-result = client.blast("blastn", "nt", large_query, on_poll=log_progress)
+result = client.blast("nucleotide", "nt", large_query, on_poll=log_progress)
 ```
 
-### `client.blast_file(path, program, database, ...) → BlastResult`
+### `client.blast_file(path, query_type, database, ...) → BlastResult`
 
-Convenience wrapper that reads a FASTA file and calls `blast()`.
+Convenience wrapper that reads a FASTA file (plain or gzipped) and calls
+`blast()`. Files over 8 MB (uncompressed) or that are not text raise
+`QueryFileError` without contacting the server. `read_query_file(path)` does
+the same checks if you build the query yourself.
 
 ```python
-result = client.blast_file("sequences.fa", "blastp", "nr", max_hits=500)
+result = client.blast_file("sequences.fa", "protein", "nr", max_hits=500)
 ```
 
-### `client.submit(program, database, query, ...) → Job`
+### `client.submit(query_type, database, query, ...) → Job`
 
 Submit a job without waiting. Returns a `Job` with the queued status.
 
 ```python
-job = client.submit("blastn", "nt_small", query)
+job = client.submit("nucleotide", "nt_small", query)
 print(job.id, job.status)  # e.g. "a3f1c2d4..." "PENDING"
 ```
 
@@ -119,7 +122,7 @@ print(job.id, job.status)  # e.g. "a3f1c2d4..." "PENDING"
 Block until a job reaches a terminal state. Returns the final `Job`.
 
 ```python
-job = client.submit("blastn", "nt_small", query)
+job = client.submit("nucleotide", "nt_small", query)
 final = client.wait(job.id, timeout=300)
 print(final.status)  # SUCCESS | FAILURE | TIMEOUT | REVOKED
 ```
@@ -187,7 +190,7 @@ Cancel a pending or running job. Returns `True` if it was cancelled.
 |---|---|---|
 | `id` | `str` | Job UUID |
 | `status` | `str` | `PENDING \| RUNNING \| SUCCESS \| FAILURE \| TIMEOUT \| REVOKED` |
-| `program` | `str` | BLAST program |
+| `query_type` | `str` | Query molecule type: `"nucleotide"` or `"protein"` |
 | `database` | `str` | Database name |
 | `submitted_at` | `str` | ISO 8601 timestamp |
 | `elapsed_s` | `float \| None` | Elapsed seconds (once running) |
@@ -200,8 +203,7 @@ Cancel a pending or running job. Returns `True` if it was cancelled.
 |---|---|---|
 | `name` | `str` | Database name |
 | `description` | `str` | Human-readable description |
-| `type` | `str` | Property: `"nucleotide"` or `"protein"` |
-| `program_types` | `list[str]` | Compatible BLAST programs |
+| `molecule_type` | `str` | `"nucleotide"` or `"protein"` |
 | `size_bytes` | `int` | Total size of index files |
 
 ---
@@ -212,7 +214,8 @@ All exceptions inherit from `ApiBlastError`.
 
 | Exception | When raised |
 |---|---|
-| `ServerError(status_code, detail)` | HTTP error from the server |
+| `ServerError(status_code, detail)` | HTTP error from the server; validation errors are reduced to their messages |
+| `QueryFileError` | Query file too large or not text; nothing was sent |
 | `JobFailedError(job_id, status, error)` | Job ended in FAILURE or TIMEOUT |
 | `ResultExpiredError(job_id)` | Result file deleted (TTL expired) |
 | `WaitTimeoutError(job_id, timeout)` | `wait()` exceeded the timeout |
@@ -222,7 +225,7 @@ from apiblast import BLASTClient, JobFailedError, WaitTimeoutError
 
 with BLASTClient("http://blast-server:8000") as client:
     try:
-        result = client.blast("blastn", "nt", query, timeout=600)
+        result = client.blast("nucleotide", "nt", query, timeout=600)
     except WaitTimeoutError:
         print("Job took too long — check with client.status(job_id)")
     except JobFailedError as e:
@@ -238,7 +241,7 @@ import pandas as pd
 from apiblast import BLASTClient
 
 with BLASTClient("http://blast-server:8000") as client:
-    result = client.blast("blastn", "silva", query)
+    result = client.blast("nucleotide", "silva", query)
 
 df = pd.DataFrame([
     {

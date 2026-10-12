@@ -17,11 +17,11 @@ VALID_AA_QUERY = ">prot1\nMKTLLLTLVVVTIVSA\n"
 
 _DATABASES = {
     "testdb": DatabaseInfo(
-        name="testdb", description="", program_types=["blastn"],
+        name="testdb", description="", molecule_type="nucleotide",
         path="/data/db/testdb", size_bytes=0, last_updated=None,
     ),
     "protdb": DatabaseInfo(
-        name="protdb", description="", program_types=["blastp", "blastx"],
+        name="protdb", description="", molecule_type="protein",
         path="/data/db/protdb", size_bytes=0, last_updated=None,
     ),
 }
@@ -77,7 +77,7 @@ def api(session, tmp_path, dispatch):
 
 def test_submit_valid_job_returns_201(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "testdb",
         "query": VALID_QUERY,
     })
@@ -88,9 +88,9 @@ def test_submit_valid_job_returns_201(api):
     assert body["poll_url"].startswith("/api/v1/jobs/")
 
 
-def test_submit_invalid_program_returns_422(api):
+def test_submit_invalid_query_type_returns_422(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "megablast",
+        "query_type": "blastn",
         "database": "testdb",
         "query": VALID_QUERY,
     })
@@ -100,7 +100,7 @@ def test_submit_invalid_program_returns_422(api):
 def test_submit_oversized_query_returns_422(api):
     big = ">seq1\n" + "A" * 600_000
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "testdb",
         "query": big,
     })
@@ -109,7 +109,7 @@ def test_submit_oversized_query_returns_422(api):
 
 def test_submit_blocked_extra_arg_returns_422(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "testdb",
         "query": VALID_QUERY,
         "extra_args": {"mpi-runner": 1},
@@ -117,44 +117,53 @@ def test_submit_blocked_extra_arg_returns_422(api):
     assert resp.status_code == 422
 
 
-@pytest.mark.parametrize("program", ["tblastn", "tblastx"])
-def test_submit_target_translating_program_returns_422(api, program):
+def test_submit_protein_query_against_nucleotide_db_returns_422(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": program,
+        "query_type": "protein",
         "database": "testdb",
-        "query": VALID_QUERY,
+        "query": VALID_AA_QUERY,
     })
     assert resp.status_code == 422
-    assert "translating the target database" in resp.text
+    assert "translating the database" in resp.text
+
+
+@pytest.mark.parametrize("query_type,database,query", [
+    ("nucleotide", "testdb", VALID_QUERY),
+    ("protein", "protdb", VALID_AA_QUERY),
+])
+def test_translation_args_rejected_for_untranslated_searches(api, query_type, database, query):
+    resp = api.post("/api/v1/jobs", json={
+        "query_type": query_type,
+        "database": database,
+        "query": query,
+        "extra_args": {"translation-table": 11},
+    })
+    assert resp.status_code == 422
+    assert "only valid for nucleotide queries against protein databases" in resp.text
+
+
+def test_translation_args_accepted_for_translated_search(api):
+    resp = api.post("/api/v1/jobs", json={
+        "query_type": "nucleotide",
+        "database": "protdb",
+        "query": VALID_QUERY,
+        "extra_args": {"translation-table": 11},
+    })
+    assert resp.status_code == 201
 
 
 def test_submit_unknown_database_returns_422(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "missing",
         "query": VALID_QUERY,
     })
     assert resp.status_code == 422
 
 
-@pytest.mark.parametrize("program,database,query", [
-    ("blastn", "protdb", VALID_QUERY),
-    ("blastp", "testdb", VALID_AA_QUERY),
-    ("blastx", "testdb", VALID_QUERY),
-])
-def test_submit_program_database_mismatch_returns_422(api, program, database, query):
-    resp = api.post("/api/v1/jobs", json={
-        "program": program,
-        "database": database,
-        "query": query,
-    })
-    assert resp.status_code == 422
-    assert "cannot search database" in resp.text
-
-
 def test_submit_legacy_default_fields_accepted(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "testdb",
         "query": VALID_QUERY,
         "outfmt": 6,
@@ -165,7 +174,7 @@ def test_submit_legacy_default_fields_accepted(api):
 
 def test_submit_legacy_non_default_field_returns_422(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "testdb",
         "query": VALID_QUERY,
         "word_size": 11,
@@ -176,31 +185,35 @@ def test_submit_legacy_non_default_field_returns_422(api):
 
 # ── Queue routing ──────────────────────────────────────────────────────────────
 
-@pytest.mark.parametrize("program,database,query", [
-    ("blastn", "testdb", VALID_QUERY),
-    ("blastp", "protdb", VALID_AA_QUERY),
-    ("blastx", "protdb", VALID_QUERY),
+@pytest.mark.parametrize("query_type,database,query", [
+    ("nucleotide", "testdb", VALID_QUERY),
+    ("protein", "protdb", VALID_AA_QUERY),
+    ("nucleotide", "protdb", VALID_QUERY),
 ])
-def test_gpu_disabled_routes_everything_to_cpu(api, dispatch, program, database, query):
-    resp = api.post("/api/v1/jobs", json={"program": program, "database": database, "query": query})
+def test_gpu_disabled_routes_everything_to_cpu(api, dispatch, query_type, database, query):
+    resp = api.post(
+        "/api/v1/jobs", json={"query_type": query_type, "database": database, "query": query}
+    )
     assert resp.status_code == 201
     kwargs = dispatch.call_args.kwargs
     assert kwargs["queue"] == "blast"
     assert kwargs["kwargs"] == {"use_gpu": False}
 
 
-@pytest.mark.parametrize("program,query", [("blastp", VALID_AA_QUERY), ("blastx", VALID_QUERY)])
-def test_gpu_enabled_routes_protein_searches_to_gpu(api, dispatch, gpu_enabled, program, query):
-    resp = api.post("/api/v1/jobs", json={"program": program, "database": "protdb", "query": query})
+@pytest.mark.parametrize("query_type,query", [("protein", VALID_AA_QUERY), ("nucleotide", VALID_QUERY)])
+def test_gpu_enabled_routes_protein_db_searches_to_gpu(api, dispatch, gpu_enabled, query_type, query):
+    resp = api.post(
+        "/api/v1/jobs", json={"query_type": query_type, "database": "protdb", "query": query}
+    )
     assert resp.status_code == 201
     kwargs = dispatch.call_args.kwargs
     assert kwargs["queue"] == "blast_gpu"
     assert kwargs["kwargs"] == {"use_gpu": True}
 
 
-def test_gpu_enabled_keeps_blastn_on_cpu(api, dispatch, gpu_enabled):
+def test_gpu_enabled_keeps_nucleotide_db_searches_on_cpu(api, dispatch, gpu_enabled):
     resp = api.post(
-        "/api/v1/jobs", json={"program": "blastn", "database": "testdb", "query": VALID_QUERY}
+        "/api/v1/jobs", json={"query_type": "nucleotide", "database": "testdb", "query": VALID_QUERY}
     )
     assert resp.status_code == 201
     assert dispatch.call_args.kwargs["queue"] == "blast"
@@ -208,7 +221,7 @@ def test_gpu_enabled_keeps_blastn_on_cpu(api, dispatch, gpu_enabled):
 
 def test_sensitivity_rejected_for_gpu_jobs(api, gpu_enabled):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastp",
+        "query_type": "protein",
         "database": "protdb",
         "query": VALID_AA_QUERY,
         "extra_args": {"s": 7.5},
@@ -219,7 +232,7 @@ def test_sensitivity_rejected_for_gpu_jobs(api, gpu_enabled):
 
 def test_sensitivity_accepted_for_cpu_jobs(api):
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastp",
+        "query_type": "protein",
         "database": "protdb",
         "query": VALID_AA_QUERY,
         "extra_args": {"s": 7.5},
@@ -230,7 +243,7 @@ def test_sensitivity_accepted_for_cpu_jobs(api):
 def test_get_job_status(api):
     # Submit first
     resp = api.post("/api/v1/jobs", json={
-        "program": "blastn",
+        "query_type": "nucleotide",
         "database": "testdb",
         "query": VALID_QUERY,
     })
@@ -243,6 +256,7 @@ def test_get_job_status(api):
     body = resp2.json()
     assert body["job_id"] == job_id
     assert body["status"] == "PENDING"
+    assert body["query_type"] == "nucleotide"
     assert body["result_url"] is None
 
 

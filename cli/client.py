@@ -32,7 +32,7 @@ class CliClient:
             {
                 "name": d.name,
                 "description": d.description,
-                "program_types": d.program_types,
+                "molecule_type": d.molecule_type,
                 "path": d.path,
                 "size_bytes": d.size_bytes,
                 "last_updated": d.last_updated,
@@ -42,7 +42,7 @@ class CliClient:
 
     def submit(
         self,
-        program: str,
+        query_type: str,
         database: str,
         query: str,
         evalue: float = 1e-5,
@@ -51,7 +51,7 @@ class CliClient:
     ) -> dict:
         job = self._call(
             self._client.submit,
-            program=program,
+            query_type=query_type,
             database=database,
             query=query,
             evalue=evalue,
@@ -65,7 +65,7 @@ class CliClient:
         return {
             "job_id": job.id,
             "status": job.status,
-            "program": job.program,
+            "query_type": job.query_type,
             "database": job.database,
             "submitted_at": job.submitted_at,
             "started_at": job.started_at,

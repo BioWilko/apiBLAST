@@ -1,6 +1,6 @@
 # apiBLAST — Server
 
-On-premises sequence search API for local network users. Submit nucleotide and protein search jobs to a shared server with async queuing, rate limiting, and hardware-aware concurrency control. Searches run on [MMseqs2](https://github.com/soedinglab/MMseqs2) (release 18-8cc5c); the API keeps BLAST's program names and tabular output format.
+On-premises sequence search API for local network users. Submit nucleotide and protein search jobs to a shared server with async queuing, rate limiting, and hardware-aware concurrency control. Searches run on [MMseqs2](https://github.com/soedinglab/MMseqs2) (release 18-8cc5c); results use BLAST's tabular output format.
 
 ## Architecture
 
@@ -14,17 +14,19 @@ Client → FastAPI (REST) → Celery worker (CPU) → mmseqs easy-search → fil
 
 **Stack:** FastAPI · Celery · Redis · SQLAlchemy · SlowAPI · MMseqs2 18-8cc5c
 
-### Programs
+### Search types
 
-| Program | Query | Database | MMseqs2 search | Runs on |
-|---|---|---|---|---|
-| `blastn` | nucleotide | nucleotide | `--search-type 3 --strand 2` | CPU |
-| `blastp` | protein | protein | `--search-type 1` | GPU when enabled, else CPU |
-| `blastx` | nucleotide (translated) | protein | `--search-type 2` | GPU when enabled, else CPU |
+Clients give the query's molecule type (`query_type`); the database's comes from its configured `type`. The pair picks the search:
 
-`tblastn` and `tblastx` are not supported: they would require translating the target database. Submitting a program against a database of the wrong type returns `422`.
+| `query_type` | Database | MMseqs2 search | Runs on |
+|---|---|---|---|
+| `nucleotide` | nucleotide | `--search-type 3 --strand 2` | CPU |
+| `protein` | protein | `--search-type 1` | GPU when enabled, else CPU |
+| `nucleotide` | protein | `--search-type 2` (query translated) | GPU when enabled, else CPU |
 
-With `MMSEQS_GPU_ENABLED=true`, `blastp` and `blastx` jobs go to the `blast_gpu` Celery queue, served by a single GPU worker; `blastn` always runs on the CPU workers (`blast` queue).
+Protein queries against a nucleotide database are rejected with `422`: they would require translating the target database.
+
+With `MMSEQS_GPU_ENABLED=true`, searches against protein databases go to the `blast_gpu` Celery queue, served by a single GPU worker; searches against nucleotide databases always run on the CPU workers (`blast` queue). Internally jobs are still stored as `blastn`/`blastp`/`blastx`.
 
 ---
 
@@ -38,8 +40,8 @@ Production runs on Kubernetes with the Helm chart in [`helm/`](../helm/README.md
 
 Building databases is outside apiBLAST. Each entry in `databases.yml` must point to a prebuilt MMseqs2 database at `<path>/<name>`, for example one of MMseqs2's standard databases (`mmseqs databases`, e.g. SILVA, NT, UniProtKB/Swiss-Prot, UniRef90):
 
-- **Nucleotide** (`type: nucleotide`, serves `blastn`): indexed with `mmseqs createindex --search-type 3`. Without the index, searches still work but are slow; the server logs a warning.
-- **Protein** (`type: protein`, serves `blastp` and `blastx`): padded with `mmseqs makepaddedseqdb` so it can be searched on the GPU. CPU searches use it unindexed.
+- **Nucleotide** (`type: nucleotide`, searched by nucleotide queries): indexed with `mmseqs createindex --search-type 3`. Without the index, searches still work but are slow; the server logs a warning.
+- **Protein** (`type: protein`, searched by protein and translated nucleotide queries): padded with `mmseqs makepaddedseqdb` so it can be searched on the GPU. CPU searches use it unindexed.
 
 ---
 
@@ -96,7 +98,7 @@ POST /api/v1/jobs
 
 ```json
 {
-  "program":    "blastn",
+  "query_type": "nucleotide",
   "database":   "silva",
   "query":      ">seq1\nATGCATGCATGCATGC",
   "evalue":     1e-5,
@@ -113,14 +115,14 @@ Returns `201` with `job_id` and `poll_url`. Unknown fields are rejected with `42
 
 Only these MMseqs2 options are accepted; values must be numbers:
 
-| Key | Programs | Meaning |
+| Key | Searches | Meaning |
 |---|---|---|
 | `min-seq-id` | all | Minimum sequence identity, as a fraction (0.95 = 95 %) |
 | `c` | all | Minimum alignment coverage (fraction), see `cov-mode` |
 | `cov-mode` | all | Coverage mode (0 = query and target, 1 = target, 2 = query, …) |
 | `s` | CPU jobs only | Sensitivity, 1–7.5 (default 5.7). Rejected for GPU jobs, which always run at maximum sensitivity |
-| `translation-mode` | `blastx` | `1` = translate the six full reading frames (default), `0` = translate ORFs only |
-| `translation-table` | `blastx` | Genetic code, e.g. `11` for bacteria and archaea (default `1`, standard) |
+| `translation-mode` | translated | `1` = translate the six full reading frames (default), `0` = translate ORFs only |
+| `translation-table` | translated | Genetic code, e.g. `11` for bacteria and archaea (default `1`, standard) |
 
 #### Removed in 2.0
 
@@ -155,15 +157,15 @@ Accept: text/tab-separated-values # raw tabular output, BLAST outfmt 6 columns
 
 ## Results compared with BLAST
 
-Results use BLAST's 12 tabular columns and coordinate conventions (for a reverse-strand `blastn` hit, `s_start > s_end`; for a minus-frame `blastx` hit, `q_start > q_end`), but they are not identical to BLAST's:
+Results use BLAST's 12 tabular columns and coordinate conventions (for a reverse-strand nucleotide hit, `s_start > s_end`; for a minus-frame translated hit, `q_start > q_end`), but they are not identical to BLAST's:
 
 - **Sensitivity:** CPU searches at the default sensitivity (`s` 5.7) can miss distant homologs and very short queries that BLAST finds. Raise `s` (up to 7.5) for harder searches.
 - **E-values and bit scores** come from different statistics and are not directly comparable with BLAST values; thresholds tuned on BLAST may need revisiting. Bit scores are whole numbers.
 - **One alignment per query–subject pair**, where BLAST may report several HSPs.
 - **Low-complexity masking** uses tantan rather than DUST/SEG; highly repetitive queries may return no hits.
 - **Subject IDs** are the first word of each database FASTA header.
-- **GPU and CPU results differ** for `blastp`/`blastx`, because the GPU uses a different prefilter at maximum sensitivity.
-- **blastx is not frameshift-aware.** Each frame (or ORF) is aligned separately, so genes in error-prone sequence (long reads, draft assemblies) give fragmented, lower-scoring hits. In ORF mode (`translation-mode: 0`), ORFs shorter than 30 codons are dropped, so queries under ~90 nt find nothing; the default frame mode has no such limit.
+- **GPU and CPU results differ** for searches against protein databases, because the GPU uses a different prefilter at maximum sensitivity.
+- **Translated searches are not frameshift-aware.** Each frame (or ORF) is aligned separately, so genes in error-prone sequence (long reads, draft assemblies) give fragmented, lower-scoring hits. In ORF mode (`translation-mode: 0`), ORFs shorter than 30 codons are dropped, so queries under ~90 nt find nothing; the default frame mode has no such limit.
 
 ---
 
@@ -177,12 +179,16 @@ Per-IP limits enforced via SlowAPI (Redis-backed):
 | Submissions per hour | `RATE_LIMIT_SUBMIT_PER_HOUR` (100) |
 | Other requests per minute | 200 |
 | Global queue depth | `MAX_QUEUE_DEPTH` (16) pending + running jobs |
-| Max query length (nt, `blastn`/`blastx`) | 500,000 bp |
-| Max query length (aa, `blastp`) | 100,000 residues |
+| Max query length (`query_type: nucleotide`) | 500,000 bp |
+| Max query length (`query_type: protein`) | 100,000 residues |
 | Max sequences per job | 100 |
 
 `429` responses include a `Retry-After: 60` header.
 `503` is returned when the server queue is full.
+`413` is returned for request bodies over
+`2 × max(MAX_QUERY_LENGTH_NT, MAX_QUERY_LENGTH_AA) + 1 MB` (2 MB by default),
+before the body is read. Validation errors (`422`) list each error's type,
+location and message, without echoing the submitted values.
 
 Holders of a [priority token](#priority-tokens) are exempt from the request
 limits and the queue depth, but not from the query size limits.
@@ -194,11 +200,11 @@ limits and the queue depth, but not from the query size limits.
 Each CPU search gets a cost estimate at submission, roughly
 
 ```
-cost = program factor × query kilo-residues × database GB × (s / 5.7)² × max(max_hits, 300) / 300
+cost = search factor × query kilo-residues × database GB × (s / 5.7)² × max(max_hits, 300) / 300
 ```
 
-where the program factor is 2 for `blastn` (both strands) and `blastx` (six
-frames) and 1 for `blastp`, and the database size is its on-disk size
+where the search factor is 2 for nucleotide queries (both strands, or six
+translated frames) and 1 for protein queries, and the database size is its on-disk size
 (including any `.idx`, with a 0.1 GB floor). Jobs with
 `cost ≥ COST_HEAVY_THRESHOLD` (default 1000) are queued behind all other
 jobs; they still run in submission order among themselves, and only wait
@@ -206,10 +212,10 @@ while lighter jobs are queued. Examples at the default threshold:
 
 | Search | Cost | Heavy? |
 |---|---|---|
-| `blastn`, one 30 kb genome vs a 5 GB database | 300 | no |
-| `blastn`, 100 × 1.5 kb 16S reads vs a 5 GB database | 1,500 | yes |
-| `blastp`, 100 × 400 aa proteins vs a 1 GB database | 40 | no |
-| `blastp`, 100 × 400 aa proteins vs a 100 GB database | 4,000 | yes |
+| Nucleotide, one 30 kb genome vs a 5 GB database | 300 | no |
+| Nucleotide, 100 × 1.5 kb 16S reads vs a 5 GB database | 1,500 | yes |
+| Protein, 100 × 400 aa proteins vs a 1 GB database | 40 | no |
+| Protein, 100 × 400 aa proteins vs a 100 GB database | 4,000 | yes |
 
 GPU searches are never deprioritised. Each submission logs its cost, so the
 threshold can be tuned against the jobs' measured run times.
@@ -279,7 +285,7 @@ All settings are environment variables (`.env` file or system env):
 | `REDIS_URL` | `redis://localhost:6379/0` | |
 | `MMSEQS_BIN` | `/usr/local/bin/mmseqs` | Path to the `mmseqs` binary |
 | `MMSEQS_THREADS` | `1` | Threads per search |
-| `MMSEQS_GPU_ENABLED` | `false` | Route `blastp`/`blastx` to the `blast_gpu` queue (needs a GPU worker) |
+| `MMSEQS_GPU_ENABLED` | `false` | Route searches against protein databases to the `blast_gpu` queue (needs a GPU worker) |
 | `DB_CONFIG` | `databases.yml` | Path to the database configuration file |
 | `RESULT_DIR` | `/data/results` | Writable directory for job results |
 | `CELERY_CONCURRENCY` | `4` | Number of parallel search workers |

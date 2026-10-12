@@ -31,7 +31,7 @@ def test_no_databases_key_returns_empty(tmp_path):
     assert load_databases(cfg) == []
 
 
-def test_nucleotide_db_program_types(tmp_path):
+def test_nucleotide_db_molecule_type(tmp_path):
     cfg = _write_config(tmp_path, """\
         databases:
           - name: mydb
@@ -42,10 +42,10 @@ def test_nucleotide_db_program_types(tmp_path):
     dbs = load_databases(cfg)
     assert len(dbs) == 1
     assert dbs[0].name == "mydb"
-    assert dbs[0].program_types == ["blastn"]
+    assert dbs[0].molecule_type == "nucleotide"
 
 
-def test_protein_db_program_types(tmp_path):
+def test_protein_db_molecule_type(tmp_path):
     cfg = _write_config(tmp_path, """\
         databases:
           - name: nr
@@ -55,7 +55,7 @@ def test_protein_db_program_types(tmp_path):
     """)
     dbs = load_databases(cfg)
     assert len(dbs) == 1
-    assert dbs[0].program_types == ["blastp", "blastx"]
+    assert dbs[0].molecule_type == "protein"
 
 
 def test_description_populated(tmp_path):
@@ -244,7 +244,7 @@ def test_get_database_returns_definition(tmp_path):
     """)
     db = get_database("nr", cfg)
     assert db is not None
-    assert db.program_types == ["blastp", "blastx"]
+    assert db.molecule_type == "protein"
     assert get_database("other", cfg) is None
 
 
@@ -283,7 +283,7 @@ def test_databases_setting_takes_precedence_over_file(tmp_path, settings_env):
     )
     dbs = load_databases()
     assert [d.name for d in dbs] == ["from_env"]
-    assert dbs[0].program_types == ["blastp", "blastx"]
+    assert dbs[0].molecule_type == "protein"
 
 
 def test_empty_databases_setting_does_not_fall_back_to_file(tmp_path, settings_env):

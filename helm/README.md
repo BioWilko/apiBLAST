@@ -59,7 +59,11 @@ cp helm/values-databases.yaml.example values-databases.yaml   # then edit
 container. Each entry needs `name` and `type`
 (`nucleotide` | `protein`); `description` is optional. `path` is the
 directory holding the DB and defaults to `/data/db/<name>`, so the app
-searches `/data/db/<name>/<name>`:
+searches `/data/db/<name>/<name>`. `path` is the path **inside the pod**,
+where the share's `apiblast/db` folder is mounted at `/data/db`. A database
+at `/shared/team/apiblast/db/uniref90/UniRef90` in Jupyter is
+`path: /data/db/uniref90` here. See `values-databases.yaml.example` for
+details.
 
 ```yaml
 databases:
@@ -71,7 +75,7 @@ databases:
     description: "UniProt Swiss-Prot"
 ```
 
-Nucleotide DBs serve `blastn`; protein DBs serve `blastp` and `blastx`.
+Nucleotide DBs are searched by nucleotide queries; protein DBs by protein and (translated) nucleotide queries.
 Changing `databases` changes the pod spec, so `helm upgrade` rolls the app
 pods.
 
@@ -157,7 +161,7 @@ Inside the namespace, `http://apiblast-api:8000` also works.
 
 `gpuWorker.enabled` (default `true`) controls both the `apiblast-worker-gpu`
 Deployment and the `MMSEQS_GPU_ENABLED` setting, so the API only routes
-blastp/blastx to the `blast_gpu` queue while the GPU worker exists. The GPU
+searches against protein databases to the `blast_gpu` queue while the GPU worker exists. The GPU
 worker holds the A100 permanently and runs one job at a time.
 `gpuWorker.threads` sets its `MMSEQS_THREADS`. The pod runs with `runtimeClassName:
 nvidia` (`gpuWorker.runtimeClassName`; set it to `""` where `nvidia` is the

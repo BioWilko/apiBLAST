@@ -6,16 +6,40 @@
 #   helm install apiblast helm/ -f values-secrets.yaml -f values-databases.yaml -n ns-cli-climb-gre-se
 #   helm upgrade apiblast helm/ -f values-secrets.yaml -f values-databases.yaml -n ns-cli-climb-gre-se
 #
-# Rendered as JSON into the app's DATABASES env var. Each entry: name, type
-# (nucleotide|protein), optional description and path. path is the directory
-# holding the DB (the app searches <path>/<name>) and defaults to
-# /data/db/<name>, i.e. apiblast/db/<name>/<name> on cephfs-shared-team.
+# Rendered as JSON into the app's DATABASES env var.
+#
+# Each entry:
+#   name         MMseqs2 database base name: the files must be <name>,
+#                <name>.dbtype, <name>.index, <name>_h, ... Case-sensitive.
+#                Also the name users submit jobs against.
+#   type         nucleotide (blastn) or protein (blastp, blastx).
+#   description  Optional, shown by GET /api/v1/databases.
+#   path         Optional. Directory holding those files, AS SEEN INSIDE THE
+#                POD. Defaults to /data/db/<name>.
+#
+# The app searches <path>/<name>.
+#
+# Paths inside the pod are not the paths you see elsewhere. Only the
+# apiblast/db folder of cephfs-shared-team is mounted into the pods, at
+# /data/db, so:
+#
+#   On the share (e.g. /shared/team in Jupyter)    In the pod (use this)
+#   /shared/team/apiblast/db/uniref90/UniRef90  -> /data/db/uniref90/UniRef90
+#
+# Paths like /shared/team/... don't exist in the pods, and searches against
+# them fail with "Input ... does not exist".
+#
+# path can be left out only when the directory and the files share the
+# name's exact spelling, e.g. apiblast/db/silva/silva.
 
 databases:
+  # apiblast/db/silva/silva* on the share: the default path works
   - name: silva
     type: nucleotide
     description: "SILVA ribosomal RNA"
-  - name: swissprot
+  # apiblast/db/uniref90/UniRef90* on the share: the directory and file names
+  # differ in case, so path is needed, written as the pod sees it
+  - name: UniRef90
     type: protein
-    description: "UniProt Swiss-Prot (makepaddedseqdb)"
-    path: /data/db/swissprot
+    description: "UniRef90 (makepaddedseqdb)"
+    path: /data/db/uniref90

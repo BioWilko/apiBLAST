@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+from enum import Enum
 from pathlib import Path
 from typing import Annotated, Optional
 
@@ -13,6 +14,8 @@ from rich.console import Console
 from rich.markup import escape
 from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 
+from apiblast.client import read_query_file
+from apiblast.exceptions import QueryFileError
 from cli import client as _client_mod
 from cli import config as _config
 from cli import formatters as _fmt
@@ -30,6 +33,11 @@ console = Console()
 err = Console(stderr=True)
 
 _TERMINAL_STATES = {"SUCCESS", "FAILURE", "TIMEOUT", "REVOKED"}
+
+
+class QueryType(str, Enum):
+    nucleotide = "nucleotide"
+    protein = "protein"
 
 
 def _make_client() -> CliClient:
@@ -69,17 +77,19 @@ def _poll_until_done(client: CliClient, job_id: str) -> dict:
 
 @app.command()
 def submit(
-    fasta_file: Annotated[Path, typer.Argument(help="FASTA file containing query sequence(s)")],
-    program: Annotated[str, typer.Option(
-        "--program", "-p", help="blastn (nucleotide DB), blastp or blastx (protein DB)"
-    )] = "blastn",
+    fasta_file: Annotated[Path, typer.Argument(help="FASTA file containing query sequence(s), plain or gzipped")],
+    query_type: Annotated[QueryType, typer.Option(
+        "--query-type", "-t",
+        help="Query molecule type. Nucleotide queries against a protein DB are translated; "
+             "protein queries need a protein DB",
+    )] = QueryType.nucleotide,
     db: Annotated[str, typer.Option("--db", "-d", help="Database name (see `apiblast databases`)")] = "",
     evalue: Annotated[float, typer.Option(help="E-value threshold")] = 1e-5,
     max_hits: Annotated[int, typer.Option(help="Maximum subjects to return per query")] = 50,
     extra_arg: Annotated[Optional[list[str]], typer.Option(
         "--extra-arg",
         help="Extra MMseqs2 option as key=value (repeatable), e.g. min-seq-id=0.9, "
-             "s=7.5, or for blastx translation-table=11",
+             "s=7.5, or for translated searches translation-table=11",
     )] = None,
     wait: Annotated[bool, typer.Option("--wait", help="Block until job completes and show results")] = False,
     format: Annotated[str, typer.Option("--format", help="Output format for --wait: table|tsv|json")] = "table",
@@ -94,7 +104,11 @@ def submit(
         err.print(f"[red]Error:[/] File not found: {fasta_file}")
         raise typer.Exit(1)
 
-    query = fasta_file.read_text()
+    try:
+        query = read_query_file(fasta_file)
+    except QueryFileError as e:
+        err.print(f"[red]Error:[/] {escape(str(e))}")
+        raise typer.Exit(1)
 
     extra: dict[str, str | int | float] = {}
     for kv in (extra_arg or []):
@@ -107,7 +121,7 @@ def submit(
     client = _make_client()
     try:
         job = client.submit(
-            program=program,
+            query_type=query_type.value,
             database=db,
             query=query,
             evalue=evalue,
@@ -122,7 +136,7 @@ def submit(
 
     _config.history_append({
         "job_id": job_id,
-        "program": program,
+        "query_type": query_type.value,
         "database": db,
         "submitted_at": job.get("submitted_at", ""),
         "status": "PENDING",

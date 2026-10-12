@@ -21,15 +21,15 @@ HEAVY_QUERY = ">big\n" + "ACGT" * 25_000 + "\n"
 
 _DATABASES = {
     "smalldb": DatabaseInfo(
-        name="smalldb", description="", program_types=["blastn"],
+        name="smalldb", description="", molecule_type="nucleotide",
         path="/data/db/smalldb", size_bytes=0, last_updated=None,
     ),
     "bigdb": DatabaseInfo(
-        name="bigdb", description="", program_types=["blastn"],
+        name="bigdb", description="", molecule_type="nucleotide",
         path="/data/db/bigdb", size_bytes=10 * 10**9, last_updated=None,
     ),
     "bigprot": DatabaseInfo(
-        name="bigprot", description="", program_types=["blastp", "blastx"],
+        name="bigprot", description="", molecule_type="protein",
         path="/data/db/bigprot", size_bytes=10 * 10**9, last_updated=None,
     ),
 }
@@ -75,10 +75,10 @@ def token(session):
     return raw
 
 
-def _submit(api, database="smalldb", query=VALID_QUERY, program="blastn", headers=None):
+def _submit(api, database="smalldb", query=VALID_QUERY, query_type="nucleotide", headers=None):
     return api.post(
         "/api/v1/jobs",
-        json={"program": program, "database": database, "query": query},
+        json={"query_type": query_type, "database": database, "query": query},
         headers=headers or {},
     )
 
@@ -113,7 +113,7 @@ def test_gpu_jobs_never_deprioritised(api, dispatch):
     original = settings.MMSEQS_GPU_ENABLED
     settings.MMSEQS_GPU_ENABLED = True
     try:
-        resp = _submit(api, database="bigprot", query=HEAVY_QUERY, program="blastx")
+        resp = _submit(api, database="bigprot", query=HEAVY_QUERY)
     finally:
         settings.MMSEQS_GPU_ENABLED = original
     assert resp.status_code == 201

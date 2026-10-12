@@ -13,11 +13,14 @@ from app.deps import get_db
 from app.models.db import Job
 from app.models.schemas import (
     CPU_ONLY_ARGS,
+    BLASTX_ARGS,
     GPU_PROGRAMS,
     CancelResponse,
     JobCreate,
     JobStatus,
     JobSubmitted,
+    query_type_of,
+    resolve_program,
 )
 from app.services import result_store
 from app.services.cost import estimate_cost, is_heavy
@@ -81,7 +84,7 @@ def submit_job(
             headers={"Retry-After": "60"},
         )
 
-    # Validate that the requested database exists and suits the program
+    # Validate that the requested database exists and suits the query
     database = get_database(job_in.database)
     if database is None:
         raise HTTPException(
@@ -89,14 +92,23 @@ def submit_job(
             detail=f"Database {job_in.database!r} not found on this server. "
                    f"Use GET /api/v1/databases to list available databases.",
         )
-    if job_in.program not in database.program_types:
+    program = resolve_program(job_in.query_type, database.molecule_type)
+    if program is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Program {job_in.program!r} cannot search database {job_in.database!r}; "
-                   f"supported programs: {', '.join(database.program_types)}",
+            detail=f"{job_in.query_type.capitalize()} queries cannot search "
+                   f"{database.molecule_type} database {job_in.database!r}: "
+                   f"it would require translating the database",
+        )
+    misplaced = sorted(BLASTX_ARGS & job_in.extra_args.keys())
+    if program != "blastx" and misplaced:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"extra_args {misplaced} are only valid for nucleotide queries "
+                   f"against protein databases",
         )
 
-    use_gpu = settings.MMSEQS_GPU_ENABLED and job_in.program in GPU_PROGRAMS
+    use_gpu = settings.MMSEQS_GPU_ENABLED and program in GPU_PROGRAMS
     cpu_only = sorted(CPU_ONLY_ARGS & job_in.extra_args.keys())
     if use_gpu and cpu_only:
         raise HTTPException(
@@ -112,7 +124,7 @@ def submit_job(
 
     # Persist job metadata
     job = Job(
-        program=job_in.program,
+        program=program,
         database=job_in.database,
         query_length=total_length,
         num_sequences=len(records),
@@ -139,7 +151,7 @@ def submit_job(
         priority = _PRIORITY_NORMAL
     else:
         cost = estimate_cost(
-            job_in.program, total_length, database.size_bytes, job_in.max_hits, job_in.extra_args
+            program, total_length, database.size_bytes, job_in.max_hits, job_in.extra_args
         )
         priority = _PRIORITY_HEAVY if is_heavy(cost) else _PRIORITY_NORMAL
     logger.info(
@@ -175,7 +187,7 @@ def get_job(job_id: str, db: Session = Depends(get_db)) -> JobStatus:
     return JobStatus(
         job_id=job.id,
         status=job.status,
-        program=job.program,
+        query_type=query_type_of(job.program),
         database=job.database,
         submitted_at=job.submitted_at,
         started_at=job.started_at,

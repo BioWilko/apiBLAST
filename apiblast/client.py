@@ -1,6 +1,7 @@
 """BLASTClient — Python interface to an apiBLAST server."""
 from __future__ import annotations
 
+import gzip
 import os
 import time
 from pathlib import Path
@@ -11,6 +12,7 @@ import httpx
 from apiblast.exceptions import (
     ApiBlastError,
     JobFailedError,
+    QueryFileError,
     ResultExpiredError,
     ServerError,
     WaitTimeoutError,
@@ -20,14 +22,73 @@ from apiblast.models import BlastHit, BlastResult, Database, Job
 _DEFAULT_SERVER = "http://localhost:8000"
 _TERMINAL_STATES = {"SUCCESS", "FAILURE", "TIMEOUT", "REVOKED"}
 
+# Largest query file read into memory. Generous: the server's default limits
+# (500,000 nt or 100,000 aa per job) fit in well under 2 MB.
+MAX_QUERY_FILE_BYTES = 8 * 1024 * 1024
+_GZIP_MAGIC = b"\x1f\x8b"
+
+
+def read_query_file(path: str | Path, max_bytes: int = MAX_QUERY_FILE_BYTES) -> str:
+    """Read a plain or gzipped FASTA file without loading more than ``max_bytes``.
+
+    Args:
+        path: Path to the FASTA file.
+        max_bytes: Largest (decompressed) size accepted.
+
+    Returns:
+        The file's text.
+
+    Raises:
+        FileNotFoundError: If ``path`` does not exist.
+        QueryFileError: If the file is larger than ``max_bytes`` or is not
+            UTF-8 text.
+    """
+    path = Path(path)
+    with path.open("rb") as raw:
+        gzipped = raw.read(2) == _GZIP_MAGIC
+    opener = gzip.open if gzipped else open
+    try:
+        with opener(path, "rb") as fh:
+            data = fh.read(max_bytes + 1)
+    except (OSError, EOFError) as e:
+        raise QueryFileError(f"{path}: cannot read gzipped file ({e})") from e
+    if len(data) > max_bytes:
+        raise QueryFileError(
+            f"{path} is larger than {max_bytes // (1024 * 1024)} MB"
+            f"{' uncompressed' if gzipped else ''}. Each job is limited to "
+            f"500,000 nucleotides or 100,000 amino acids by default; split the "
+            f"query into several jobs."
+        )
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise QueryFileError(
+            f"{path} is not a text FASTA file (plain or gzipped)"
+        ) from e
+
+
+def _format_detail(detail) -> str:
+    """Render a FastAPI error detail; validation errors become their messages."""
+    if not isinstance(detail, list):
+        return str(detail)
+    messages = []
+    for err in detail:
+        if not isinstance(err, dict):
+            messages.append(str(err))
+            continue
+        msg = str(err.get("msg", err)).removeprefix("Value error, ")
+        field = ".".join(str(p) for p in err.get("loc", []) if p != "body")
+        messages.append(f"{field}: {msg}" if field else msg)
+    return "; ".join(messages)
+
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if resp.is_success:
         return
     try:
-        detail = resp.json().get("detail", resp.text)
+        detail = _format_detail(resp.json().get("detail", resp.text))
     except Exception:
-        detail = resp.text
+        detail = resp.text[:1000]
     if resp.status_code == 410:
         raise ResultExpiredError.__new__(ResultExpiredError)
     raise ServerError(resp.status_code, detail)
@@ -49,7 +110,7 @@ class BLASTClient:
     Example:
         >>> from apiblast import BLASTClient
         >>> with BLASTClient("http://blast-server:8000") as client:
-        ...     result = client.blast("blastn", "nt_small", ">seq1\\nATGCATGC")
+        ...     result = client.blast("nucleotide", "nt_small", ">seq1\\nATGCATGC")
         ...     for hit in result.hits:
         ...         print(hit.subject_id, hit.evalue)
     """
@@ -143,7 +204,7 @@ class BLASTClient:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
             ...     dbs = client.databases()
-            ...     nucleotide_dbs = [db.name for db in dbs if db.type == "nucleotide"]
+            ...     nucleotide_dbs = [db.name for db in dbs if db.molecule_type == "nucleotide"]
             ...     print(nucleotide_dbs)
         """
         data = self._request("get", "/api/v1/databases").json()
@@ -151,7 +212,7 @@ class BLASTClient:
 
     def submit(
         self,
-        program: str,
+        query_type: str,
         database: str,
         query: str,
         evalue: float = 1e-5,
@@ -165,14 +226,16 @@ class BLASTClient:
         to track progress, then call :meth:`results` when done.
 
         Args:
-            program: Search program. One of ``blastn`` (nucleotide
-                database), ``blastp`` or ``blastx`` (protein database).
+            query_type: Query molecule type, ``"nucleotide"`` or
+                ``"protein"``. Nucleotide queries against a protein
+                database are translated; protein queries need a protein
+                database.
             database: Database name as returned by :meth:`databases`.
             query: FASTA-formatted query string (one or more sequences).
             evalue: E-value cutoff — hits with e-value above this are excluded.
             max_hits: Maximum number of subjects to return per query.
             extra_args: Additional MMseqs2 options as key/value pairs, e.g.
-                ``{"min-seq-id": 0.95}`` or, for blastx,
+                ``{"min-seq-id": 0.95}`` or, for translated searches,
                 ``{"translation-table": 11}``. Only options the server
                 allows are accepted.
 
@@ -180,21 +243,21 @@ class BLASTClient:
             A :class:`~apiblast.models.Job` representing the queued job.
 
         Raises:
-            ServerError: If the server rejects the request (e.g. unknown
-                program or database, invalid parameters).
+            ServerError: If the server rejects the request (e.g. unsupported
+                query type or database, invalid parameters).
             httpx.TransportError: If the server cannot be reached.
 
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
             ...     job = client.submit(
-            ...         "blastn", "nt_small", ">seq1\\nATGCATGC",
+            ...         "nucleotide", "nt_small", ">seq1\\nATGCATGC",
             ...         evalue=1e-10, max_hits=10,
             ...     )
             ...     print(f"Submitted job {job.id} (status: {job.status})")
         """
         payload: dict = {
-            "program": program,
+            "query_type": query_type,
             "database": database,
             "query": query,
             "evalue": evalue,
@@ -221,7 +284,7 @@ class BLASTClient:
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
-            ...     job = client.submit("blastn", "nt_small", ">seq1\\nATGC")
+            ...     job = client.submit("nucleotide", "nt_small", ">seq1\\nATGC")
             ...     job = client.status(job.id)
             ...     print(job.status)
         """
@@ -262,7 +325,7 @@ class BLASTClient:
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
-            ...     job = client.submit("blastn", "nt_small", ">seq1\\nATGC")
+            ...     job = client.submit("nucleotide", "nt_small", ">seq1\\nATGC")
             ...     final = client.wait(
             ...         job.id,
             ...         timeout=300.0,
@@ -303,7 +366,7 @@ class BLASTClient:
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
-            ...     job = client.submit("blastn", "nt_small", ">seq1\\nATGC")
+            ...     job = client.submit("nucleotide", "nt_small", ">seq1\\nATGC")
             ...     client.wait(job.id)
             ...     result = client.results(job.id)
             ...     print(f"{result.num_hits} hits")
@@ -343,7 +406,7 @@ class BLASTClient:
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
-            ...     job = client.submit("blastn", "nt_small", ">seq1\\nATGC")
+            ...     job = client.submit("nucleotide", "nt_small", ">seq1\\nATGC")
             ...     client.wait(job.id)
             ...     tsv = client.results_tsv(job.id)
             ...     print(tsv[:200])
@@ -376,7 +439,7 @@ class BLASTClient:
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
-            ...     job = client.submit("blastn", "nt", ">seq1\\nATGC")
+            ...     job = client.submit("nucleotide", "nt", ">seq1\\nATGC")
             ...     cancelled = client.cancel(job.id)
             ...     print("Cancelled" if cancelled else "Already finished")
         """
@@ -387,7 +450,7 @@ class BLASTClient:
 
     def blast(
         self,
-        program: str,
+        query_type: str,
         database: str,
         query: str,
         evalue: float = 1e-5,
@@ -404,14 +467,16 @@ class BLASTClient:
         for most use cases.
 
         Args:
-            program: Search program. One of ``blastn`` (nucleotide
-                database), ``blastp`` or ``blastx`` (protein database).
+            query_type: Query molecule type, ``"nucleotide"`` or
+                ``"protein"``. Nucleotide queries against a protein
+                database are translated; protein queries need a protein
+                database.
             database: Database name as returned by :meth:`databases`.
             query: FASTA-formatted query string (one or more sequences).
             evalue: E-value cutoff — hits with e-value above this are excluded.
             max_hits: Maximum number of subjects to return per query.
             extra_args: Additional MMseqs2 options as key/value pairs, e.g.
-                ``{"min-seq-id": 0.95}`` or, for blastx,
+                ``{"min-seq-id": 0.95}`` or, for translated searches,
                 ``{"translation-table": 11}``. Only options the server
                 allows are accepted.
             poll_interval: Initial polling interval in seconds for :meth:`wait`.
@@ -435,20 +500,20 @@ class BLASTClient:
         Example:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
-            ...     result = client.blast("blastn", "nt_small", ">seq1\\nATGCATGC")
+            ...     result = client.blast("nucleotide", "nt_small", ">seq1\\nATGCATGC")
             ...     print(f"Found {result.num_hits} hits")
 
             Log progress for long-running searches:
 
             >>> with BLASTClient("http://blast-server:8000") as client:
             ...     result = client.blast(
-            ...         "blastn", "nt", ">seq1\\nATGCATGC",
+            ...         "nucleotide", "nt", ">seq1\\nATGCATGC",
             ...         timeout=600.0,
             ...         on_poll=lambda j: print(f"  {j.status}"),
             ...     )
         """
         job = self.submit(
-            program=program,
+            query_type=query_type,
             database=database,
             query=query,
             evalue=evalue,
@@ -468,21 +533,23 @@ class BLASTClient:
     def blast_file(
         self,
         path: str | Path,
-        program: str,
+        query_type: str,
         database: str,
         **kwargs,
     ) -> BlastResult:
         """Submit a BLAST job from a FASTA file and wait for results.
 
-        Reads the entire file into memory and forwards its contents to
-        :meth:`blast`. All keyword arguments accepted by :meth:`blast` are
+        Reads the file with :func:`read_query_file` and forwards its contents
+        to :meth:`blast`. All keyword arguments accepted by :meth:`blast` are
         supported (``evalue``, ``max_hits``, ``timeout``, ``on_poll``, etc.).
 
         Args:
-            path: Path to a FASTA file. Accepts both ``str`` and
-                :class:`pathlib.Path`.
-            program: Search program. One of ``blastn`` (nucleotide
-                database), ``blastp`` or ``blastx`` (protein database).
+            path: Path to a FASTA file, plain or gzipped. Accepts both
+                ``str`` and :class:`pathlib.Path`.
+            query_type: Query molecule type, ``"nucleotide"`` or
+                ``"protein"``. Nucleotide queries against a protein
+                database are translated; protein queries need a protein
+                database.
             database: Database name as returned by :meth:`databases`.
             **kwargs: Additional keyword arguments forwarded to :meth:`blast`.
 
@@ -491,6 +558,8 @@ class BLASTClient:
 
         Raises:
             FileNotFoundError: If ``path`` does not exist.
+            QueryFileError: If the file is too large or not text; nothing
+                is sent to the server.
             JobFailedError: If the job ends in a failure state.
             WaitTimeoutError: If the ``timeout`` kwarg elapses.
             ResultExpiredError: If results expire before retrieval.
@@ -502,10 +571,10 @@ class BLASTClient:
             >>> from apiblast import BLASTClient
             >>> with BLASTClient("http://blast-server:8000") as client:
             ...     result = client.blast_file(
-            ...         Path("sequences.fasta"), "blastn", "nt_small",
+            ...         Path("sequences.fasta"), "nucleotide", "nt_small",
             ...         evalue=1e-10,
             ...     )
             ...     print(f"Found {result.num_hits} hits")
         """
-        query = Path(path).read_text()
-        return self.blast(program=program, database=database, query=query, **kwargs)
+        query = read_query_file(path)
+        return self.blast(query_type=query_type, database=database, query=query, **kwargs)

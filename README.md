@@ -1,6 +1,6 @@
 # apiBLAST
 
-Submit sequence search jobs to an on-premises apiBLAST server from the command line. Searches run on MMseqs2 and use BLAST's program names and tabular output.
+Submit sequence search jobs to an on-premises apiBLAST server from the command line. Searches run on MMseqs2 and return BLAST tabular output.
 
 > **Server operators:** see [docs/server.md](docs/server.md) for installation, deployment, API reference, and hardware tuning.
 
@@ -26,10 +26,10 @@ apiblast config set --server http://blast-server:8000
 apiblast databases
 
 # Submit a job and get results when done
-apiblast submit query.fa --program blastn --db nt_small --wait
+apiblast submit query.fa --db nt_small --wait
 
 # Or submit and poll separately
-JOB=$(apiblast submit query.fa --program blastn --db nt_small)
+JOB=$(apiblast submit query.fa --db nt_small)
 apiblast status $JOB
 apiblast results $JOB
 ```
@@ -41,7 +41,7 @@ apiblast results $JOB
 ### `apiblast submit <fasta_file>`
 
 ```
---program, -p   blastn (nucleotide DB) | blastp | blastx (protein DB)  [default: blastn]
+--query-type, -t  nucleotide | protein  [default: nucleotide]
 --db, -d        Database name (required — see `apiblast databases`)
 --evalue        E-value threshold  [default: 1e-5]
 --max-hits      Maximum subjects to return per query  [default: 50]
@@ -51,24 +51,33 @@ apiblast results $JOB
 --top N         Show only the top N hits
 ```
 
-`--extra-arg` accepts only these options: `min-seq-id`, `c`, `cov-mode`, `s` (sensitivity, CPU searches only), and for blastx `translation-mode` (`1` = six full frames, the default; `0` = ORFs) and `translation-table` (e.g. `11` for bacteria):
+`--query-type` describes the query; the database's type comes from the server. The pair decides the search:
+
+| Query | Database | Search |
+|---|---|---|
+| nucleotide | nucleotide | nucleotide vs nucleotide, both strands |
+| protein | protein | protein vs protein |
+| nucleotide | protein | query translated, then searched against protein |
+| protein | nucleotide | not supported (would require translating the database) |
+
+`--extra-arg` accepts only these options: `min-seq-id`, `c`, `cov-mode`, `s` (sensitivity, CPU searches only), and for translated searches `translation-mode` (`1` = six full frames, the default; `0` = ORFs) and `translation-table` (e.g. `11` for bacteria):
 
 ```bash
-apiblast submit genes.fa --program blastx --db prot_db --extra-arg translation-table=11 --wait
+apiblast submit genes.fa --db prot_db --extra-arg translation-table=11 --wait
 ```
 
-`tblastn` and `tblastx` are not supported, and `--word-size`/`--outfmt` were removed in 2.0.
+`--word-size`/`--outfmt` were removed in 2.0.
 
 Without `--wait`, prints the bare job ID to stdout — useful for scripting:
 
 ```bash
-JOB=$(apiblast submit query.fa --program blastp --db nr)
+JOB=$(apiblast submit query.fa --query-type protein --db nr)
 ```
 
 With `--wait`, blocks with a live progress spinner then renders a hit table:
 
 ```bash
-apiblast submit query.fa --program blastn --db silva --wait --top 10
+apiblast submit query.fa --db silva --wait --top 10
 ```
 
 ### `apiblast results <job_id>`
@@ -93,11 +102,11 @@ apiblast results $JOB --format json | jq '.hits[0]'
 
 ### `apiblast status <job_id>`
 
-Print the current status of a single job (ID, program, database, elapsed time, status).
+Print the current status of a single job (ID, query type, database, elapsed time, status).
 
 ### `apiblast databases`
 
-List all databases available on the configured server (name, type, programs, size, description). Servers host MMseqs2 databases; nucleotide databases accept `blastn`, protein databases `blastp` and `blastx`.
+List all databases available on the configured server (name, molecule type, size, description). Servers host MMseqs2 databases.
 
 ### `apiblast jobs`
 

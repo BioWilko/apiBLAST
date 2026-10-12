@@ -43,6 +43,23 @@ class ServerError(ApiBlastError):
         self.detail = detail
 
 
+class QueryFileError(ApiBlastError):
+    """A query file cannot be submitted.
+
+    Raised before anything is sent to the server when the file is too large,
+    or is not plain or gzipped text.
+
+    Example:
+        >>> from apiblast import BLASTClient
+        >>> from apiblast.exceptions import QueryFileError
+        >>> try:
+        ...     with BLASTClient("http://blast-server:8000") as client:
+        ...         client.blast_file("reads.fastq.bz2", "nucleotide", "nt")
+        ... except QueryFileError as e:
+        ...     print(e)
+    """
+
+
 class JobFailedError(ApiBlastError):
     """Job ended in FAILURE, TIMEOUT, or REVOKED.
 
@@ -61,7 +78,7 @@ class JobFailedError(ApiBlastError):
         >>> from apiblast.exceptions import JobFailedError
         >>> try:
         ...     with BLASTClient("http://blast-server:8000") as client:
-        ...         result = client.blast("blastn", "nt", ">seq1\\nATGC")
+        ...         result = client.blast("nucleotide", "nt", ">seq1\\nATGC")
         ... except JobFailedError as e:
         ...     print(f"Job {e.job_id} failed with status {e.status}")
         ...     if e.error:
@@ -121,7 +138,7 @@ class WaitTimeoutError(ApiBlastError):
         >>> from apiblast.exceptions import WaitTimeoutError
         >>> try:
         ...     with BLASTClient("http://blast-server:8000") as client:
-        ...         result = client.blast("blastn", "nt", ">seq1\\nATGC", timeout=60.0)
+        ...         result = client.blast("nucleotide", "nt", ">seq1\\nATGC", timeout=60.0)
         ... except WaitTimeoutError as e:
         ...     print(f"Job {e.job_id} did not finish within {e.timeout:.0f}s")
     """

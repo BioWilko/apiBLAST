@@ -96,7 +96,7 @@ def print_job_status(job: dict) -> None:
     t.add_column("Value")
     t.add_row("Job ID", job.get("job_id", ""))
     t.add_row("Status", f"[{style}]{status}[/]")
-    t.add_row("Program", job.get("program", ""))
+    t.add_row("Query type", job.get("query_type", ""))
     t.add_row("Database", job.get("database", ""))
     t.add_row("Elapsed", _elapsed(job))
     if job.get("error"):
@@ -121,15 +121,12 @@ def print_databases(dbs: list[dict]) -> None:
     t = Table(box=box.SIMPLE_HEAD, show_edge=False)
     t.add_column("Name", style="cyan", no_wrap=True)
     t.add_column("Type")
-    t.add_column("Programs")
     t.add_column("Size", justify="right")
     t.add_column("Description")
     for db in dbs:
-        db_type = "nucleotide" if "blastn" in db.get("program_types", []) else "protein"
         t.add_row(
             db.get("name", ""),
-            db_type,
-            ", ".join(db.get("program_types", [])),
+            db.get("molecule_type", ""),
             _human_size(db.get("size_bytes", 0)),
             db.get("description", ""),
         )
@@ -160,7 +157,7 @@ def print_jobs_history(entries: list[dict]) -> None:
         return
     t = Table(box=box.SIMPLE_HEAD, show_edge=False)
     t.add_column("Job ID", style="cyan", no_wrap=True)
-    t.add_column("Program")
+    t.add_column("Query type")
     t.add_column("Database")
     t.add_column("Submitted", justify="right")
     t.add_column("Status")
@@ -169,7 +166,7 @@ def print_jobs_history(entries: list[dict]) -> None:
         style = status_style(status)
         t.add_row(
             e.get("job_id", ""),
-            e.get("program", ""),
+            e.get("query_type", ""),
             e.get("database", ""),
             _relative_time(e.get("submitted_at", "")),
             f"[{style}]{status}[/]",

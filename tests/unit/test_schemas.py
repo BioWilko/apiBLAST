@@ -3,36 +3,47 @@ import pytest
 from pydantic import ValidationError
 from unittest.mock import patch
 
-from app.models.schemas import JobCreate
+from app.models.schemas import JobCreate, query_type_of, resolve_program
 
 VALID_NT_QUERY = ">seq1\nATGCATGCATGCATGC\n"
 VALID_AA_QUERY = ">prot1\nMKTLLLTLVVVTIVSA\n"
 
 
 def _make_job(**kwargs) -> JobCreate:
-    defaults = dict(program="blastn", database="testdb", query=VALID_NT_QUERY)
+    defaults = dict(query_type="nucleotide", database="testdb", query=VALID_NT_QUERY)
     defaults.update(kwargs)
     return JobCreate(**defaults)
 
 
-# ── Program validation ─────────────────────────────────────────────────────────
+# ── Query type validation ──────────────────────────────────────────────────────
 
-def test_valid_programs_accepted():
-    for prog in ("blastn", "blastp", "blastx"):
-        query = VALID_AA_QUERY if prog == "blastp" else VALID_NT_QUERY
-        job = _make_job(program=prog, query=query)
-        assert job.program == prog
-
-
-def test_invalid_program_rejected():
-    with pytest.raises(ValidationError, match="program"):
-        _make_job(program="megablast")
+def test_valid_query_types_accepted():
+    for query_type, query in (("nucleotide", VALID_NT_QUERY), ("protein", VALID_AA_QUERY)):
+        job = _make_job(query_type=query_type, query=query)
+        assert job.query_type == query_type
 
 
-@pytest.mark.parametrize("prog", ["tblastn", "tblastx"])
-def test_target_translating_programs_rejected(prog):
-    with pytest.raises(ValidationError, match="translating the target database"):
-        _make_job(program=prog)
+@pytest.mark.parametrize("query_type", ["blastn", "dna", ""])
+def test_invalid_query_type_rejected(query_type):
+    with pytest.raises(ValidationError, match="query_type"):
+        _make_job(query_type=query_type)
+
+
+@pytest.mark.parametrize("query_type,db_type,program", [
+    ("nucleotide", "nucleotide", "blastn"),
+    ("protein", "protein", "blastp"),
+    ("nucleotide", "protein", "blastx"),
+    ("protein", "nucleotide", None),
+])
+def test_resolve_program(query_type, db_type, program):
+    assert resolve_program(query_type, db_type) == program
+
+
+@pytest.mark.parametrize("program,query_type", [
+    ("blastn", "nucleotide"), ("blastp", "protein"), ("blastx", "nucleotide"),
+])
+def test_query_type_of(program, query_type):
+    assert query_type_of(program) == query_type
 
 
 # ── Query FASTA validation ─────────────────────────────────────────────────────
@@ -62,20 +73,20 @@ def test_oversized_nt_query_rejected():
     big_seq = "A" * 600_000
     query = f">big\n{big_seq}"
     with pytest.raises(ValidationError, match="nucleotides"):
-        _make_job(program="blastn", query=query)
+        _make_job(query_type="nucleotide", query=query)
 
 
-def test_blastx_uses_nucleotide_length_limit():
+def test_nucleotide_query_uses_nucleotide_length_limit():
     query = f">big\n{'A' * 200_000}"
-    job = _make_job(program="blastx", query=query)
-    assert job.program == "blastx"
+    job = _make_job(query_type="nucleotide", query=query)
+    assert job.query_type == "nucleotide"
 
 
 def test_oversized_aa_query_rejected():
     big_seq = "M" * 200_000
     query = f">big\n{big_seq}"
     with pytest.raises(ValidationError, match="amino acids"):
-        _make_job(program="blastp", query=query)
+        _make_job(query_type="protein", query=query)
 
 
 # ── extra_args validation ──────────────────────────────────────────────────────
@@ -96,27 +107,20 @@ def test_non_numeric_arg_value_rejected():
         _make_job(extra_args={"s": "7.5 --mpi-runner sh"})
 
 
-def test_blastx_args_accepted_for_blastx():
-    job = _make_job(program="blastx", extra_args={"translation-mode": 0, "translation-table": 11})
+def test_translation_args_accepted():
+    job = _make_job(extra_args={"translation-mode": 0, "translation-table": 11})
     assert job.extra_args["translation-table"] == 11
-
-
-@pytest.mark.parametrize("prog", ["blastn", "blastp"])
-def test_blastx_args_rejected_for_other_programs(prog):
-    query = VALID_AA_QUERY if prog == "blastp" else VALID_NT_QUERY
-    with pytest.raises(ValidationError, match="only valid for blastx"):
-        _make_job(program=prog, query=query, extra_args={"translation-table": 11})
 
 
 def test_invalid_translation_mode_rejected():
     with pytest.raises(ValidationError, match="translation-mode"):
-        _make_job(program="blastx", extra_args={"translation-mode": 2})
+        _make_job(extra_args={"translation-mode": 2})
 
 
 @pytest.mark.parametrize("table", [7, 8, 17, 32])
 def test_invalid_translation_table_rejected(table):
     with pytest.raises(ValidationError, match="genetic code"):
-        _make_job(program="blastx", extra_args={"translation-table": table})
+        _make_job(extra_args={"translation-table": table})
 
 
 # ── Fields removed in 2.0 ──────────────────────────────────────────────────────

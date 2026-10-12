@@ -10,9 +10,6 @@ from app.models.schemas import DatabaseInfo
 
 logger = logging.getLogger(__name__)
 
-_NT_PROGRAMS = ["blastn"]
-_AA_PROGRAMS = ["blastp", "blastx"]
-
 # BLAST+ (makeblastdb) volume, index and alias file extensions
 _BLAST_EXTS = {".nal", ".ndb", ".nhr", ".nin", ".nsq", ".pal", ".pdb", ".phr", ".pin", ".psq"}
 
@@ -69,7 +66,7 @@ def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
     results: list[DatabaseInfo] = []
     for entry in _read_entries(config_path):
         db_type = str(entry.get("type", "nucleotide")).lower()
-        program_types = _NT_PROGRAMS if db_type == "nucleotide" else _AA_PROGRAMS
+        molecule_type = "nucleotide" if db_type == "nucleotide" else "protein"
 
         db_name = entry["name"]
         db_dir = Path(entry["path"])
@@ -84,7 +81,7 @@ def load_databases(config_path: Path | None = None) -> list[DatabaseInfo]:
             DatabaseInfo(
                 name=db_name,
                 description=entry.get("description", ""),
-                program_types=program_types,
+                molecule_type=molecule_type,
                 path=str(db_dir),
                 size_bytes=size_bytes,
                 last_updated=last_updated,
@@ -124,7 +121,7 @@ def _check_format(db_dir: Path, db_name: str, db_type: str) -> None:
         _report_once(
             db_name, "unindexed", logging.WARNING,
             "Nucleotide database %r has no precomputed index (%s.idx); "
-            "blastn searches against it will be slow",
+            "searches against it will be slow",
             db_name, target,
         )
 

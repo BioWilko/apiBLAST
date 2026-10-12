@@ -16,9 +16,10 @@
 #            (e.g. name: silva → files silva, silva.dbtype, silva.index,
 #            silva_h, silva.idx …).
 #
-# type     - "nucleotide" : nucleotide database, accepted by blastn.
+# type     - "nucleotide" : nucleotide database, searched by nucleotide queries.
 #                           Indexed with createindex --search-type 3.
-#            "protein"    : protein database, accepted by blastp and blastx.
+#            "protein"    : protein database, searched by protein or (translated)
+#                           nucleotide queries.
 #                           Padded with makepaddedseqdb for GPU searches.
 #
 # description - Free-text label shown in GET /api/v1/databases responses.
