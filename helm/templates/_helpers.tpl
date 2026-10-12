@@ -106,7 +106,7 @@ Usage: include "apiblast.initDirsContainer" (dict "root" $ "subPaths" (list "api
   volumeMounts:
     - name: shared-team
       mountPath: /shared/team
-  {{- include "apiblast.resources" (dict "requests" (dict "memory" "64Mi" "cpu" "100m")) | nindent 2 }}
+  {{- include "apiblast.resources" (dict "requests" (dict "memory" "64Mi" "cpu" 1) "limits" (dict "memory" "128Mi")) | nindent 2 }}
 {{- end }}
 
 {{/*

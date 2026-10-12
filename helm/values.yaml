@@ -89,8 +89,11 @@ api:
 migrate:
   resources:
     requests:
-      cpu: "250m"
+      cpu: 1
       memory: "512Mi"
+    limits:
+      enabled: true
+      memory: "1Gi"
 
 celery:
   # Concurrent jobs on the CPU worker
@@ -129,7 +132,7 @@ gpuWorker:
 beat:
   resources:
     requests:
-      cpu: "100m"
+      cpu: 1
       memory: "256Mi"
     limits:
       enabled: true
@@ -151,7 +154,7 @@ postgres:
   securityContext: {}
   resources:
     requests:
-      cpu: "500m"
+      cpu: 1
       memory: "1G"
     limits:
       enabled: true
@@ -164,7 +167,7 @@ redis:
     pullPolicy: IfNotPresent
   resources:
     requests:
-      cpu: "250m"
+      cpu: 1
       memory: "512Mi"
     limits:
       enabled: true
