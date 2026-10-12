@@ -14,7 +14,7 @@ come from a gitignored `values-secrets.yaml`.
 | Deployment `apiblast-worker`               | Celery CPU worker, queues `blast,celery`, concurrency `celery.concurrency`  |
 | Deployment `apiblast-worker-gpu`           | Celery GPU worker, queue `blast_gpu`, concurrency 1, `nvidia.com/gpu: 1`. Only if `gpuWorker.enabled` |
 | Deployment `apiblast-beat`                 | Celery beat (hourly `expire_results`)                                       |
-| StatefulSet + Service `apiblast-postgres`  | `postgres:16-alpine`, data in `apiblast/postgres`                           |
+| Deployment + Service `apiblast-postgres`   | `postgres:16-alpine`, data in `apiblast/postgres`                           |
 | Deployment + Service `apiblast-redis`      | `redis:7.4-alpine --save 60 1`, data in `apiblast/redis`                    |
 | Secret `apiblast-credentials`              | `SECRET_KEY`, `POSTGRES_PASSWORD`, `DATABASE_URL`                           |
 
@@ -170,7 +170,7 @@ Run these in order:
 
 1. `kubectl scale deploy/apiblast-api --replicas=0`
 2. `kubectl exec deploy/apiblast-worker -- celery -A app.tasks.celery_app.celery_app purge -Q blast_gpu -f`
-3. `kubectl exec statefulset/apiblast-postgres -- psql -U apiblast -c "UPDATE jobs SET status='REVOKED', finished_at=now(), error_message='GPU unavailable' WHERE status IN ('PENDING','RUNNING') AND program IN ('blastp','blastx');"`
+3. `kubectl exec deploy/apiblast-postgres -- psql -U apiblast -c "UPDATE jobs SET status='REVOKED', finished_at=now(), error_message='GPU unavailable' WHERE status IN ('PENDING','RUNNING') AND program IN ('blastp','blastx');"`
    - This covers jobs that were queued and jobs that were running on the dead
      GPU pod.
    - Both count towards the queue-depth guard.

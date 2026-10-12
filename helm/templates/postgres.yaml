@@ -1,15 +1,19 @@
 {{- $pg := .Values.postgres }}
 {{- $sc := $pg.securityContext | default .Values.defaultSecurityContext }}
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: apiblast-postgres
   namespace: {{ .Values.namespace }}
   labels:
     app: apiblast-postgres
 spec:
-  serviceName: apiblast-postgres
+  # Must stay 1, with Recreate: two postgres pods on the same PGDATA corrupt
+  # it. Unlike a StatefulSet, a Deployment replaces a pod on a lost node
+  # without waiting for it to stop, so this risk remains on node failure.
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: apiblast-postgres
