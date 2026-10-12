@@ -1,0 +1,21 @@
+# Copy this file to values-databases.yaml and list the databases this
+# deployment serves. values-databases.yaml is gitignored, so editing it does
+# not show up as an uncommitted change.
+#
+# Usage:
+#   helm install apiblast helm/ -f values-secrets.yaml -f values-databases.yaml -n ns-cli-climb-gre-se
+#   helm upgrade apiblast helm/ -f values-secrets.yaml -f values-databases.yaml -n ns-cli-climb-gre-se
+#
+# Rendered to /etc/apiblast/databases.yml. Each entry: name, type
+# (nucleotide|protein), optional description and path. path is the directory
+# holding the DB (the app searches <path>/<name>) and defaults to
+# /data/db/<name>, i.e. apiblast/db/<name>/<name> on cephfs-shared-team.
+
+databases:
+  - name: silva
+    type: nucleotide
+    description: "SILVA ribosomal RNA"
+  - name: swissprot
+    type: protein
+    description: "UniProt Swiss-Prot (makepaddedseqdb)"
+    path: /data/db/swissprot

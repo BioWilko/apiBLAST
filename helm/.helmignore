@@ -7,4 +7,5 @@
 
 # Gitignored files containing real credentials
 values-secrets.yaml
+values-databases.yaml
 values-*.local.yaml

@@ -46,8 +46,9 @@ alembic/versions/__pycache__/
 celerybeat-schedule
 celerybeat.pid
 
-# Config
+# Site-specific config, edited per deployment (copy the .example files)
 databases.yml
+values-databases.yaml
 
-# Helm credentials - never commit
-helm/values-secrets.yaml
+# Helm credentials - never commit (wherever the copy is made)
+values-secrets.yaml

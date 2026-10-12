@@ -67,19 +67,8 @@ config:
   RATE_LIMIT_SUBMIT_PER_MINUTE: 10
   RATE_LIMIT_SUBMIT_PER_HOUR: 100
 
-# Rendered to /etc/apiblast/databases.yml. Each entry: name, type
-# (nucleotide|protein), optional description and path. path is the directory
-# holding the DB (the app searches <path>/<name>) and defaults to
-# /data/db/<name>, i.e. apiblast/db/<name>/<name> on cephfs-shared-team.
-# Example:
-#   databases:
-#     - name: silva
-#       type: nucleotide
-#       description: "SILVA ribosomal RNA"
-#     - name: swissprot
-#       type: protein
-#       description: "UniProt Swiss-Prot (makepaddedseqdb)"
-#       path: /data/db/swissprot
+# Supplied via the gitignored values-databases.yaml (see
+# values-databases.yaml.example). Rendered to /etc/apiblast/databases.yml.
 databases: []
 
 # ── Components ────────────────────────────────────────────────────────────────

@@ -48,7 +48,14 @@ MMseqs2's standard databases from `mmseqs databases`. BLAST databases
 
 ## Configuring databases
 
-`databases` in `values.yaml` is rendered to `/etc/apiblast/databases.yml`
+Databases are listed in a gitignored `values-databases.yaml`, so filling them
+in doesn't leave uncommitted changes:
+
+```bash
+cp helm/values-databases.yaml.example values-databases.yaml   # then edit
+```
+
+`databases` is rendered to `/etc/apiblast/databases.yml`
 (`DB_CONFIG`). Each entry needs `name` and `type`
 (`nucleotide` | `protein`); `description` is optional. `path` is the
 directory holding the DB and defaults to `/data/db/<name>`, so the app
@@ -83,8 +90,8 @@ cp helm/values-secrets.yaml.example values-secrets.yaml   # then fill in
   `postgresql+psycopg2://apiblast:<pw>@apiblast-postgres:5432/apiblast`
   (`<pw>` must match `postgresPassword`)
 
-`values-secrets.yaml` is gitignored (repo `.gitignore`) and listed in
-`.helmignore`.
+`values-secrets.yaml` and `values-databases.yaml` are gitignored (repo
+`.gitignore`, in any directory) and listed in `.helmignore`.
 
 **Caveat: the Postgres password is applied only at `initdb`**, i.e. the first
 time Postgres starts on an empty `apiblast/postgres` folder. Changing
@@ -113,10 +120,10 @@ in-cluster, so treat tokens as trusted-network credentials.
 ```bash
 # Validate / dry-run
 helm lint helm/
-helm template apiblast helm/ -f values-secrets.yaml | less
+helm template apiblast helm/ -f values-secrets.yaml -f values-databases.yaml | less
 
 # Install
-helm install apiblast helm/ -f values-secrets.yaml -n ns-cli-climb-gre-se
+helm install apiblast helm/ -f values-secrets.yaml -f values-databases.yaml -n ns-cli-climb-gre-se
 ```
 
 If initdb fails as uid 1000 on CephFS, run Postgres as the alpine image's own
@@ -169,7 +176,7 @@ Run these in order:
    - Both count towards the queue-depth guard.
    - Unacked messages are redelivered after the 24 h `visibility_timeout`. The
      worker skips jobs that are already finished (REVOKED included), so those are no-ops.
-4. `helm upgrade apiblast helm/ -f values-secrets.yaml --reuse-values --set gpuWorker.enabled=false`
+4. `helm upgrade apiblast helm/ -f values-secrets.yaml -f values-databases.yaml --reuse-values --set gpuWorker.enabled=false`
    This sets `MMSEQS_GPU_ENABLED=false`, removes the GPU worker and brings
    the API back.
 
